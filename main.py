@@ -407,19 +407,41 @@ def get_drive_service():
     except Exception as e:
         print(f"Errore inizializzazione Drive API: {e}")
         return None
+        
+def create_or_get_folder(service, folder_name, parent_id):
+    """Crea cartella se non esiste, restituisce ID"""
+    if service is None:
+        return None
+        
+    query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and '{parent_id}' in parents"
+    response = service.files().list(q=query, fields="files(id,name)").execute()
+    
+    if response['files']:
+        print(f"📁 Usata cartella esistente: {folder_name}")
+        return response['files'][0]['id']
+    
+    # Crea nuova cartella
+    folder_metadata = {
+        'name': folder_name,
+        'mimeType': 'application/vnd.google-apps.folder',
+        'parents': [parent_id]
+    }
+    folder = service.files().create(body=folder_metadata, fields='id').execute()
+    print(f"📁 Creata cartella Drive: {folder_name} (id={folder['id']})")
+    return folder['id']
 
 def upload_to_drive(service, local_path, city, run):
-    """Carica un file su Drive/ICON-2I/<RUN>_<city>.json"""
+    """Carica in ICON-2I/YYYYMMDDRR/citta.json"""
     if service is None or not os.path.exists(local_path):
         return
 
     try:
-        file_name = os.path.basename(local_path)
-        drive_name = f"{run}_{file_name}"
+        # Crea cartella RUN: ICON-2I/2025122712/
+        run_folder_id = create_or_get_folder(service, run, DRIVE_FOLDER_ID_ICON2I)
         
         file_metadata = {
-            "name": drive_name,
-            "parents": [DRIVE_FOLDER_ID_ICON2I],
+            "name": os.path.basename(local_path),  # "Roma.json"
+            "parents": [run_folder_id],
         }
         media = MediaFileUpload(local_path, mimetype="application/json", resumable=True)
         created = service.files().create(
@@ -427,7 +449,7 @@ def upload_to_drive(service, local_path, city, run):
             media_body=media,
             fields="id,name",
         ).execute()
-        print(f"✅ Caricato su Drive: {drive_name} (id={created.get('id')})")
+        print(f"✅ Caricato: ICON-2I/{run}/{created['name']} (id={created.get('id')})")
     except Exception as e:
         print(f"❌ Upload Drive fallito per {local_path}: {e}")
 
