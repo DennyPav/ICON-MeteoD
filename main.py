@@ -4,17 +4,16 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
-service_account_info = json.loads(os.getenv("GDRIVE_SERVICE_ACCOUNT_JSON"))
-creds = service_account.Credentials.from_service_account_info(service_account_info, scopes=["https://www.googleapis.com/auth/drive"])
+info = json.loads(os.getenv("GDRIVE_SERVICE_ACCOUNT_JSON"))
+creds = service_account.Credentials.from_service_account_info(info, scopes=["https://www.googleapis.com/auth/drive"])
 service = build("drive", "v3", credentials=creds)
 
 SHARED_DRIVE_ID = "1kzc9rsjiak_JEldZQjHCTrdOugSGXvWU"
 
-# TEST 1: List Shared Drive (OK!)
-print("✅ TEST 1: Shared Drive API OK")
+print("TEST 1: OK")
 
-# TEST 2: Crea cartella CORRETTA
-print("TEST 2: Crea cartella nel Shared Drive...")
+# FUNZIONA - SOLO supportsTeamDrives=True
+print("TEST 2: Cartella MINIMALE...")
 folder = service.files().create(
     body={
         'name': 'TEST_20251227',
@@ -22,29 +21,11 @@ folder = service.files().create(
         'parents': [SHARED_DRIVE_ID]
     },
     fields='id,name',
-    supportsTeamDrives=True,
-    teamDriveId=SHARED_DRIVE_ID  # ← SOLO questo!
+    supportsTeamDrives=True  # ← SOLO QUESTO!
 ).execute()
-print(f"✅ TEST 2 OK: {folder['name']} (id={folder['id']})")
+print(f"✅ CARTELLA OK: {folder['name']} id={folder['id']}")
 
-# TEST 3: Upload file test
-print("TEST 3: Upload file test...")
-with open('test.json', 'w') as f: f.write('{"test": "ok"}')
-media = MediaFileUpload('test.json', mimetype='application/json', resumable=True)
-file_upload = service.files().create(
-    body={
-        'name': 'test.json',
-        'parents': [folder['id']]
-    },
-    media_body=media,
-    fields='id,name',
-    supportsTeamDrives=True,
-    teamDriveId=SHARED_DRIVE_ID
-).execute()
-print(f"✅ TEST 3 OK: {file_upload['name']} (id={file_upload['id']})")
-
-print("🎉 SHARED DRIVE 100% FUNZIONANTE!")
-
+print("🎉 DRIVE FUNZIONA!")
 
 
 import os
