@@ -408,53 +408,54 @@ def get_drive_service():
         return None
 
 def create_or_get_folder(service, folder_name, parent_id):
-    """Crea cartella se non esiste, restituisce ID (Shared Drive compatibile)"""
+    """Shared Drive - Crea/ritrova cartella con API corretta"""
     if service is None:
         return None
         
-    # Query per Shared Drive
-    query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and '{parent_id}' in parents"
+    # LISTA con supportsTeamDrives
     response = service.files().list(
-        q=query, 
+        q=f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and '{parent_id}' in parents",
         fields="files(id,name)",
-        supportsTeamDrives=True
+        supportsTeamDrives=True,
+        corpora='teamDrive',
+        teamDriveId=DRIVE_FOLDER_ID_ICON2I,  # ← CRITICO
+        includeTeamDriveItems=True
     ).execute()
     
     if response['files']:
         print(f"📁 Usata cartella esistente: {folder_name}")
         return response['files'][0]['id']
     
-    # Crea nuova cartella in Shared Drive
+    # CREA con teamDriveId
     folder_metadata = {
         'name': folder_name,
         'mimeType': 'application/vnd.google-apps.folder',
         'parents': [parent_id]
     }
     folder = service.files().create(
-        body=folder_metadata, 
+        body=folder_metadata,
         fields='id',
-        supportsTeamDrives=True
+        supportsTeamDrives=True,
+        corpora='teamDrive',
+        teamDriveId=DRIVE_FOLDER_ID_ICON2I  # ← CRITICO
     ).execute()
-    print(f"📁 Creata cartella Drive: {folder_name} (id={folder['id']})")
+    print(f"📁 Creata cartella: {folder_name} (id={folder['id']})")
     return folder['id']
 
 def upload_to_drive(service, local_path, city, run):
-    """Carica in ICON-2I/YYYYMMDDRR/citta.json con SHARED DRIVE"""
+    """Upload DEFINITIVO Shared Drive"""
     if service is None or not os.path.exists(local_path):
-        print(f"⏭️ Upload saltato per {os.path.basename(local_path)}")
+        print(f"⏭️ Upload saltato: {os.path.basename(local_path)}")
         return
 
     try:
-        # PARAMETRO CRITICO: ID dell'UNITY CONDIVISA (DRIVE_FOLDER_ID_ICON2I)
-        SHARED_DRIVE_ID = DRIVE_FOLDER_ID_ICON2I
+        # STEP 1: Cartella RUN nel Shared Drive root
+        run_folder_id = create_or_get_folder(service, run, DRIVE_FOLDER_ID_ICON2I)
         
-        # Crea cartella RUN: ICON-2I/2025122712/
-        run_folder_id = create_or_get_folder(service, run, SHARED_DRIVE_ID)
-        
+        # STEP 2: UPLOAD con parametri Shared Drive COMPLETI
         file_metadata = {
-            "name": os.path.basename(local_path),  # "Roma.json"
-            "parents": [run_folder_id],
-            "supportsTeamDrives": True  # CRITICO per Shared Drive
+            "name": os.path.basename(local_path),
+            "parents": [run_folder_id]
         }
         
         media = MediaFileUpload(local_path, mimetype="application/json", resumable=True)
@@ -462,14 +463,16 @@ def upload_to_drive(service, local_path, city, run):
             body=file_metadata,
             media_body=media,
             fields="id,name",
-            supportsTeamDrives=True  # CRITICO!
+            supportsTeamDrives=True,
+            corpora='teamDrive',
+            teamDriveId=DRIVE_FOLDER_ID_ICON2I  # ← QUESTO È LA CHIAVE!
         ).execute()
         
-        print(f"✅ Caricato: ICON-2I/{run}/{created['name']} (id={created.get('id')})")
+        print(f"✅ UPLOAD OK: {run}/{created['name']} (id={created['id']})")
         
     except Exception as e:
-        print(f"❌ Upload Drive fallito per {local_path}: {e}")
-        print("💾 File salvato localmente:", local_path)
+        print(f"❌ Upload {city}: {str(e)[:80]}...")
+        print("💾 Salvato:", local_path)
 
 def process_data():
     """PIPELINE COMPLETA: GRIB → JSON ULTRA-COMPATTO per città in WORKDIR/yyyymmddHH"""
