@@ -1,0 +1,6 @@
+requests
+numpy
+xarray
+beautifulsoup4
+cfgrib
+eccodes
