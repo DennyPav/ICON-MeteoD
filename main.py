@@ -1,4 +1,35 @@
 #!/bin/env python3
+import json, os
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
+
+service_account_info = json.loads(os.getenv("GDRIVE_SERVICE_ACCOUNT_JSON"))
+creds = service_account.Credentials.from_service_account_info(service_account_info, scopes=["https://www.googleapis.com/auth/drive"])
+service = build("drive", "v3", credentials=creds)
+
+SHARED_DRIVE_ID = "1kzc9rsjiak_JEldZQjHCTrdOugSGXvWU"
+
+# TEST 1: List Shared Drive
+print("TEST 1: Shared Drive access...")
+drives = service.teamdrives().list().execute()
+print("✅ Shared Drive API OK")
+
+# TEST 2: Crea cartella test
+print("TEST 2: Crea cartella...")
+folder = service.files().create(
+    body={'name': 'TEST_20251227', 'mimeType': 'application/vnd.google-apps.folder', 'parents': [SHARED_DRIVE_ID]},
+    fields='id,name',
+    supportsTeamDrives=True,
+    corpora='teamDrive',
+    teamDriveId=SHARED_DRIVE_ID
+).execute()
+print(f"✅ Cartella creata: {folder['name']} (id={folder['id']})")
+
+print("🎉 TUTTO OK! Drive funziona!")
+
+
+
 import os
 import requests
 import json
