@@ -12,8 +12,8 @@ WORKDIR = os.path.dirname(os.path.abspath(__file__))
 VARIABLES = ['T_2M', 'RELHUM', 'TOT_PREC', 'CLCT', 'CLCL', 'CLCM', 'CLCH', 'U_10M', 'V_10M', 'VMAX_10M', 'LPI', 'CAPE_ML', 'CAPE_CON', 'UH_MAX', 'PMSL', 'HSURF', 'ASOB_S']
 VENUES_PATH = f"{WORKDIR}/comuni_italia_complete.json"
 
-# Google Drive API
-DRIVE_FOLDER_ID_ICON2I = os.getenv("DRIVE_FOLDER_ID_ICON2I", "")
+# Google Drive API - ORA USA SHARED DRIVE ID
+DRIVE_FOLDER_ID_ICON2I = os.getenv("DRIVE_FOLDER_ID_ICON2I", "")  # ← ID SHARED DRIVE!
 GDRIVE_SERVICE_ACCOUNT_JSON = os.getenv("GDRIVE_SERVICE_ACCOUNT_JSON", "")
 
 from google.oauth2 import service_account
@@ -244,7 +244,6 @@ def classify_weather(t2m, rh2m, clct, clcl, clcm, clch, tp_rate, wind_kmh, lpi, 
     elif octas <= 6: return "NUVOLOSO"
     else: return "COPERTO"
 
-
 def extract_variable(var, lat_idx, lon_idx, is_precip=False):
     """
     Estrae valore pesato ROBUSTO per tutti i tipi di array (scalare/1D/2D/3D)
@@ -402,57 +401,75 @@ def get_drive_service():
             scopes=["https://www.googleapis.com/auth/drive"],
         )
         service = build("drive", "v3", credentials=creds)
-        print("Drive API inizializzata correttamente")
+        print("✅ Drive API inizializzata correttamente (Shared Drive ready)")
         return service
     except Exception as e:
-        print(f"Errore inizializzazione Drive API: {e}")
+        print(f"❌ Errore inizializzazione Drive API: {e}")
         return None
-        
+
 def create_or_get_folder(service, folder_name, parent_id):
-    """Crea cartella se non esiste, restituisce ID"""
+    """Crea cartella se non esiste, restituisce ID (Shared Drive compatibile)"""
     if service is None:
         return None
         
+    # Query per Shared Drive
     query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and '{parent_id}' in parents"
-    response = service.files().list(q=query, fields="files(id,name)").execute()
+    response = service.files().list(
+        q=query, 
+        fields="files(id,name)",
+        supportsTeamDrives=True
+    ).execute()
     
     if response['files']:
         print(f"📁 Usata cartella esistente: {folder_name}")
         return response['files'][0]['id']
     
-    # Crea nuova cartella
+    # Crea nuova cartella in Shared Drive
     folder_metadata = {
         'name': folder_name,
         'mimeType': 'application/vnd.google-apps.folder',
         'parents': [parent_id]
     }
-    folder = service.files().create(body=folder_metadata, fields='id').execute()
+    folder = service.files().create(
+        body=folder_metadata, 
+        fields='id',
+        supportsTeamDrives=True
+    ).execute()
     print(f"📁 Creata cartella Drive: {folder_name} (id={folder['id']})")
     return folder['id']
 
 def upload_to_drive(service, local_path, city, run):
-    """Carica in ICON-2I/YYYYMMDDRR/citta.json"""
+    """Carica in ICON-2I/YYYYMMDDRR/citta.json con SHARED DRIVE"""
     if service is None or not os.path.exists(local_path):
+        print(f"⏭️ Upload saltato per {os.path.basename(local_path)}")
         return
 
     try:
+        # PARAMETRO CRITICO: ID dell'UNITY CONDIVISA (DRIVE_FOLDER_ID_ICON2I)
+        SHARED_DRIVE_ID = DRIVE_FOLDER_ID_ICON2I
+        
         # Crea cartella RUN: ICON-2I/2025122712/
-        run_folder_id = create_or_get_folder(service, run, DRIVE_FOLDER_ID_ICON2I)
+        run_folder_id = create_or_get_folder(service, run, SHARED_DRIVE_ID)
         
         file_metadata = {
             "name": os.path.basename(local_path),  # "Roma.json"
             "parents": [run_folder_id],
+            "supportsTeamDrives": True  # CRITICO per Shared Drive
         }
+        
         media = MediaFileUpload(local_path, mimetype="application/json", resumable=True)
         created = service.files().create(
             body=file_metadata,
             media_body=media,
             fields="id,name",
+            supportsTeamDrives=True  # CRITICO!
         ).execute()
+        
         print(f"✅ Caricato: ICON-2I/{run}/{created['name']} (id={created.get('id')})")
+        
     except Exception as e:
         print(f"❌ Upload Drive fallito per {local_path}: {e}")
-
+        print("💾 File salvato localmente:", local_path)
 
 def process_data():
     """PIPELINE COMPLETA: GRIB → JSON ULTRA-COMPATTO per città in WORKDIR/yyyymmddHH"""
@@ -470,8 +487,8 @@ def process_data():
     output_dir = f"{WORKDIR}/{RUN}"
     os.makedirs(output_dir, exist_ok=True)
 
+    # SINGLETON Drive service - una sola inizializzazione
     drive_service = get_drive_service()
-
     
     data = {}
     for var in VARIABLES:
@@ -617,20 +634,19 @@ def process_data():
             city_json_path = f"{output_dir}/{city}.json"
             with open(city_json_path, 'w', encoding='utf-8') as f: 
                 json.dump(city_data, f, separators=(',',':'), ensure_ascii=False)
-            # Upload su Drive subito dopo la scrittura
-            drive_service = get_drive_service()
+            
+            # ✅ UPLOAD CON SHARED DRIVE (usa il service singleton)
             upload_to_drive(drive_service, city_json_path, city, RUN)
-
             
             processed += 1
             if processed % 100 == 0:
                 print(f"Processate {processed}/{len(venues)} città...")
                 
         except Exception as e:
-            print(f"Errore {city}: {e}")
+            print(f"❌ Errore {city}: {e}")
             continue
     
-    print(f"Salvati {processed}/{len(venues)} JSON ULTRA-COMPATTI in {output_dir}/")
+    print(f"🎉 Salvati {processed}/{len(venues)} JSON ULTRA-COMPATTI in {output_dir}/")
     return output_dir
 
 if __name__ == "__main__": 
