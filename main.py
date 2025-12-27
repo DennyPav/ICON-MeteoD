@@ -442,7 +442,7 @@ def create_or_get_folder(service, folder_name, parent_id):
         return None
 
 def upload_to_drive(service, local_path, city, run):
-    """UPLOAD MINIMALE - FUNZIONANTE"""
+    """UPLOAD ROBUSTO - Gestisce TUTTI i casi"""
     if service is None or not os.path.exists(local_path):
         print(f"💾 {os.path.basename(local_path)}")
         return
@@ -453,7 +453,9 @@ def upload_to_drive(service, local_path, city, run):
             print(f"❌ Skip {city}")
             return
         
-        media = MediaFileUpload(local_path, mimetype="application/json")
+        # ✅ UPLOAD SENZA resumable (più stabile)
+        media = MediaFileUpload(local_path, mimetype="application/json", resumable=False)
+        
         file_obj = service.files().create(
             body={
                 'name': os.path.basename(local_path),
@@ -461,14 +463,15 @@ def upload_to_drive(service, local_path, city, run):
             },
             media_body=media,
             fields='id,name',
-            supportsTeamDrives=True  # ← SOLO QUESTO!
+            supportsTeamDrives=True
         ).execute()
         
-        print(f"✅ UPLOAD: {run}/{city}.json")
+        print(f"✅ {run}/{city}.json")
         
     except Exception as e:
-        print(f"❌ {city}: {str(e)[:40]}")
+        print(f"❌ {city}: {str(e)[:60]}")
         print("💾 LOCALE:", local_path)
+
 
 
 def process_data():
