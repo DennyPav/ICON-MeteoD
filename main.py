@@ -408,19 +408,21 @@ def get_drive_service():
         return None
 
 def create_or_get_folder(service, folder_name, parent_id):
-    """FIX 404 Shared Drive - Query corretta"""
+    """CREA AUTOMATICAMENTE cartella RUN nel Shared Drive root"""
     if service is None:
+        print("⏭️ Service Drive non disponibile")
         return None
         
     try:
-        # ✅ QUERY SEMPLICE per Shared Drive root
-        query = f"name = '{folder_name}' and parents in '{parent_id}' and mimeType = 'application/vnd.google-apps.folder'"
+        print(f"🔍 Cerco/creo cartella: {folder_name} in Shared Drive {parent_id[:8]}...")
+        
+        # QUERY SEMPLICE per Shared Drive
         response = service.files().list(
-            q=query,
+            q=f"name='{folder_name}' and '{parent_id}' in parents and mimeType='application/vnd.google-apps.folder'",
             fields="files(id,name)",
             supportsTeamDrives=True,
-            corpora='teamDrive',
-            teamDriveId=DRIVE_FOLDER_ID_ICON2I,
+            corpora="teamDrive",
+            teamDriveId=parent_id,
             includeItemsFromAllDrives=True
         ).execute()
         
@@ -428,7 +430,8 @@ def create_or_get_folder(service, folder_name, parent_id):
             print(f"📁 Usata cartella esistente: {folder_name}")
             return response['files'][0]['id']
         
-        # ✅ CREAZIONE SEMPLICE
+        # CREA cartella nel Shared Drive ROOT
+        print(f"📁 Creo cartella: {folder_name}")
         folder_metadata = {
             'name': folder_name,
             'mimeType': 'application/vnd.google-apps.folder',
@@ -438,28 +441,30 @@ def create_or_get_folder(service, folder_name, parent_id):
             body=folder_metadata,
             fields='id,name',
             supportsTeamDrives=True,
-            corpora='teamDrive',
-            teamDriveId=DRIVE_FOLDER_ID_ICON2I
+            corpora="teamDrive",
+            teamDriveId=parent_id
         ).execute()
-        print(f"📁 Creata cartella: {folder_name} (id={folder['id']})")
+        print(f"✅ Cartella CREATA: {folder_name} (id={folder['id']})")
         return folder['id']
         
     except Exception as e:
-        print(f"❌ Errore cartella {folder_name}: {str(e)[:60]}")
+        print(f"❌ Errore cartella {folder_name}: {str(e)[:80]}")
         return None
 
-
 def upload_to_drive(service, local_path, city, run):
-    """Upload DEFINITIVO Shared Drive"""
+    """UPLOAD AUTOMATICO con creazione cartella RUN"""
     if service is None or not os.path.exists(local_path):
-        print(f"⏭️ Upload saltato: {os.path.basename(local_path)}")
+        print(f"⏭️ Skip {os.path.basename(local_path)}")
         return
 
     try:
-        # STEP 1: Cartella RUN nel Shared Drive root
+        # 1. CREA/TROVA cartella RUN automaticamente (es: 2025122712)
         run_folder_id = create_or_get_folder(service, run, DRIVE_FOLDER_ID_ICON2I)
+        if not run_folder_id:
+            print(f"❌ Impossibile creare cartella {run}")
+            return
         
-        # STEP 2: UPLOAD con parametri Shared Drive COMPLETI
+        # 2. UPLOAD file nella cartella RUN
         file_metadata = {
             "name": os.path.basename(local_path),
             "parents": [run_folder_id]
@@ -471,15 +476,15 @@ def upload_to_drive(service, local_path, city, run):
             media_body=media,
             fields="id,name",
             supportsTeamDrives=True,
-            corpora='teamDrive',
-            teamDriveId=DRIVE_FOLDER_ID_ICON2I  # ← QUESTO È LA CHIAVE!
+            corpora="teamDrive",
+            teamDriveId=DRIVE_FOLDER_ID_ICON2I
         ).execute()
         
-        print(f"✅ UPLOAD OK: {run}/{created['name']} (id={created['id']})")
+        print(f"✅ UPLOAD: {run}/{created['name']} (id={created['id'][:8]}...)")
         
     except Exception as e:
-        print(f"❌ Upload {city}: {str(e)[:80]}...")
-        print("💾 Salvato:", local_path)
+        print(f"❌ Upload {city}: {str(e)[:60]}...")
+        print("💾 File:", local_path)
 
 def process_data():
     """PIPELINE COMPLETA: GRIB → JSON ULTRA-COMPATTO per città in WORKDIR/yyyymmddHH"""
