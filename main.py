@@ -10,23 +10,40 @@ service = build("drive", "v3", credentials=creds)
 
 SHARED_DRIVE_ID = "1kzc9rsjiak_JEldZQjHCTrdOugSGXvWU"
 
-# TEST 1: List Shared Drive
-print("TEST 1: Shared Drive access...")
-drives = service.teamdrives().list().execute()
-print("✅ Shared Drive API OK")
+# TEST 1: List Shared Drive (OK!)
+print("✅ TEST 1: Shared Drive API OK")
 
-# TEST 2: Crea cartella test
-print("TEST 2: Crea cartella...")
+# TEST 2: Crea cartella CORRETTA
+print("TEST 2: Crea cartella nel Shared Drive...")
 folder = service.files().create(
-    body={'name': 'TEST_20251227', 'mimeType': 'application/vnd.google-apps.folder', 'parents': [SHARED_DRIVE_ID]},
+    body={
+        'name': 'TEST_20251227',
+        'mimeType': 'application/vnd.google-apps.folder',
+        'parents': [SHARED_DRIVE_ID]
+    },
     fields='id,name',
     supportsTeamDrives=True,
-    corpora='teamDrive',
+    teamDriveId=SHARED_DRIVE_ID  # ← SOLO questo!
+).execute()
+print(f"✅ TEST 2 OK: {folder['name']} (id={folder['id']})")
+
+# TEST 3: Upload file test
+print("TEST 3: Upload file test...")
+with open('test.json', 'w') as f: f.write('{"test": "ok"}')
+media = MediaFileUpload('test.json', mimetype='application/json', resumable=True)
+file_upload = service.files().create(
+    body={
+        'name': 'test.json',
+        'parents': [folder['id']]
+    },
+    media_body=media,
+    fields='id,name',
+    supportsTeamDrives=True,
     teamDriveId=SHARED_DRIVE_ID
 ).execute()
-print(f"✅ Cartella creata: {folder['name']} (id={folder['id']})")
+print(f"✅ TEST 3 OK: {file_upload['name']} (id={file_upload['id']})")
 
-print("🎉 TUTTO OK! Drive funziona!")
+print("🎉 SHARED DRIVE 100% FUNZIONANTE!")
 
 
 
