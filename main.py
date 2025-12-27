@@ -408,39 +408,46 @@ def get_drive_service():
         return None
 
 def create_or_get_folder(service, folder_name, parent_id):
-    """Shared Drive - Crea/ritrova cartella con API corretta"""
+    """FIX 404 Shared Drive - Query corretta"""
     if service is None:
         return None
         
-    # LISTA con supportsTeamDrives
-    response = service.files().list(
-        q=f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and '{parent_id}' in parents",
-        fields="files(id,name)",
-        supportsTeamDrives=True,
-        corpora='teamDrive',
-        teamDriveId=DRIVE_FOLDER_ID_ICON2I,  # ← CRITICO
-        includeTeamDriveItems=True
-    ).execute()
-    
-    if response['files']:
-        print(f"📁 Usata cartella esistente: {folder_name}")
-        return response['files'][0]['id']
-    
-    # CREA con teamDriveId
-    folder_metadata = {
-        'name': folder_name,
-        'mimeType': 'application/vnd.google-apps.folder',
-        'parents': [parent_id]
-    }
-    folder = service.files().create(
-        body=folder_metadata,
-        fields='id',
-        supportsTeamDrives=True,
-        corpora='teamDrive',
-        teamDriveId=DRIVE_FOLDER_ID_ICON2I  # ← CRITICO
-    ).execute()
-    print(f"📁 Creata cartella: {folder_name} (id={folder['id']})")
-    return folder['id']
+    try:
+        # ✅ QUERY SEMPLICE per Shared Drive root
+        query = f"name = '{folder_name}' and parents in '{parent_id}' and mimeType = 'application/vnd.google-apps.folder'"
+        response = service.files().list(
+            q=query,
+            fields="files(id,name)",
+            supportsTeamDrives=True,
+            corpora='teamDrive',
+            teamDriveId=DRIVE_FOLDER_ID_ICON2I,
+            includeItemsFromAllDrives=True
+        ).execute()
+        
+        if response.get('files'):
+            print(f"📁 Usata cartella esistente: {folder_name}")
+            return response['files'][0]['id']
+        
+        # ✅ CREAZIONE SEMPLICE
+        folder_metadata = {
+            'name': folder_name,
+            'mimeType': 'application/vnd.google-apps.folder',
+            'parents': [parent_id]
+        }
+        folder = service.files().create(
+            body=folder_metadata,
+            fields='id,name',
+            supportsTeamDrives=True,
+            corpora='teamDrive',
+            teamDriveId=DRIVE_FOLDER_ID_ICON2I
+        ).execute()
+        print(f"📁 Creata cartella: {folder_name} (id={folder['id']})")
+        return folder['id']
+        
+    except Exception as e:
+        print(f"❌ Errore cartella {folder_name}: {str(e)[:60]}")
+        return None
+
 
 def upload_to_drive(service, local_path, city, run):
     """Upload DEFINITIVO Shared Drive"""
