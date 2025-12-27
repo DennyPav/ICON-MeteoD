@@ -12,6 +12,14 @@ WORKDIR = os.path.dirname(os.path.abspath(__file__))
 VARIABLES = ['T_2M', 'RELHUM', 'TOT_PREC', 'CLCT', 'CLCL', 'CLCM', 'CLCH', 'U_10M', 'V_10M', 'VMAX_10M', 'LPI', 'CAPE_ML', 'CAPE_CON', 'UH_MAX', 'PMSL', 'HSURF', 'ASOB_S']
 VENUES_PATH = f"{WORKDIR}/comuni_italia_all.json"
 
+# Google Drive API
+DRIVE_FOLDER_ID_ICON2I = os.getenv("DRIVE_FOLDER_ID_ICON2I", "")
+GDRIVE_SERVICE_ACCOUNT_JSON = os.getenv("GDRIVE_SERVICE_ACCOUNT_JSON", "")
+
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
+
 # Lapse rates interpolati
 LAPSE_DRY = 0.0098   # °C/m (9.8 °C/km)
 LAPSE_MOIST = 0.006  # °C/m (~6 °C/km)
@@ -381,6 +389,49 @@ def calculate_daily_summaries(hourly_data, clct_daily, clcl_daily, clcm_daily, c
     
     return daily_summaries
 
+def get_drive_service():
+    """Crea client Drive v3 usando il service account passato via env JSON."""
+    if not GDRIVE_SERVICE_ACCOUNT_JSON or not DRIVE_FOLDER_ID_ICON2I:
+        print("Drive API disabilitata (mancano variabili d'ambiente)")
+        return None
+
+    try:
+        info = json.loads(GDRIVE_SERVICE_ACCOUNT_JSON)
+        creds = service_account.Credentials.from_service_account_info(
+            info,
+            scopes=["https://www.googleapis.com/auth/drive.file"],
+        )
+        service = build("drive", "v3", credentials=creds)
+        print("Drive API inizializzata correttamente")
+        return service
+    except Exception as e:
+        print(f"Errore inizializzazione Drive API: {e}")
+        return None
+
+def upload_to_drive(service, local_path, city, run):
+    """Carica un file su Drive/ICON-2I/<RUN>_<city>.json"""
+    if service is None or not os.path.exists(local_path):
+        return
+
+    try:
+        file_name = os.path.basename(local_path)
+        drive_name = f"{run}_{file_name}"
+        
+        file_metadata = {
+            "name": drive_name,
+            "parents": [DRIVE_FOLDER_ID_ICON2I],
+        }
+        media = MediaFileUpload(local_path, mimetype="application/json", resumable=True)
+        created = service.files().create(
+            body=file_metadata,
+            media_body=media,
+            fields="id,name",
+        ).execute()
+        print(f"✅ Caricato su Drive: {drive_name} (id={created.get('id')})")
+    except Exception as e:
+        print(f"❌ Upload Drive fallito per {local_path}: {e}")
+
+
 def process_data():
     """PIPELINE COMPLETA: GRIB → JSON ULTRA-COMPATTO per città in WORKDIR/yyyymmddHH"""
     RUN = os.getenv("RUN", "")
@@ -396,6 +447,9 @@ def process_data():
     
     output_dir = f"{WORKDIR}/{RUN}"
     os.makedirs(output_dir, exist_ok=True)
+
+    drive_service = get_drive_service()
+
     
     data = {}
     for var in VARIABLES:
@@ -541,6 +595,10 @@ def process_data():
             city_json_path = f"{output_dir}/{city}.json"
             with open(city_json_path, 'w', encoding='utf-8') as f: 
                 json.dump(city_data, f, separators=(',',':'), ensure_ascii=False)
+            # Upload su Drive subito dopo la scrittura
+            drive_service = get_drive_service()
+            upload_to_drive(drive_service, city_json_path, city, RUN)
+
             
             processed += 1
             if processed % 100 == 0:
