@@ -399,7 +399,7 @@ def get_drive_service():
         info = json.loads(GDRIVE_SERVICE_ACCOUNT_JSON)
         creds = service_account.Credentials.from_service_account_info(
             info,
-            scopes=["https://www.googleapis.com/auth/drive.file"],
+            scopes=["https://www.googleapis.com/auth/drive"],
         )
         service = build("drive", "v3", credentials=creds)
         print("Drive API inizializzata correttamente")
