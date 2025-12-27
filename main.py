@@ -10,7 +10,7 @@ from collections import Counter
 
 WORKDIR = os.path.dirname(os.path.abspath(__file__))
 VARIABLES = ['T_2M', 'RELHUM', 'TOT_PREC', 'CLCT', 'CLCL', 'CLCM', 'CLCH', 'U_10M', 'V_10M', 'VMAX_10M', 'LPI', 'CAPE_ML', 'CAPE_CON', 'UH_MAX', 'PMSL', 'HSURF', 'ASOB_S']
-VENUES_PATH = f"{WORKDIR}/comuni_italia_all.json"
+VENUES_PATH = f"{WORKDIR}/comuni_italia_complete.json"
 
 # Google Drive API
 DRIVE_FOLDER_ID_ICON2I = os.getenv("DRIVE_FOLDER_ID_ICON2I", "")
