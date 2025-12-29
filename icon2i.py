@@ -499,7 +499,7 @@ def process_data():
             lpi_raw = data['LPI']['unknown'].values
             cape_raw = np.maximum(data['CAPE_ML']['cape_ml'].values, data['CAPE_CON']['cape_con'].values)
             uh_raw = data['UH_MAX']['unknown'].values
-            pmsl_raw = data['PMSL']['prmsl'].values / 100.0
+            pmsl_raw = data['PMSL']['pmsl'].values / 100.0
             asob_s_raw = data['ASOB_S']['msnswrf'].values if 'ASOB_S' in data else np.zeros_like(t2m_raw)
             
             t2m = extract_variable(t2m_raw, center_y, center_x, False)
