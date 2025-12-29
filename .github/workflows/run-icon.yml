@@ -30,7 +30,10 @@ jobs:
         echo "$GOOGLE_CREDENTIALS_JSON" > ~/.gcp/meteod_drive.json
       env:
         GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
-
+        
+    - name: Install dependencies
+      run: pip install pydrive2
+      
     - name: Run ICON2I pipeline
       env:
         GOOGLE_APPLICATION_CREDENTIALS: /home/runner/.gcp/meteod_drive.json
