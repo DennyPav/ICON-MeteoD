@@ -625,10 +625,17 @@ def process_data():
             continue
     
     print(f"Salvati {processed}/{len(venues)} JSON ULTRA-COMPATTI in {output_dir}/")
-    
+
+    print("GOOGLE_CREDENTIALS_JSON length:", len(os.environ.get("GOOGLE_CREDENTIALS_JSON", "")))
+    print("GDRIVE_ICON2I_ID:", os.environ.get("GDRIVE_ICON2I_ID", "missing"))
+
     # Upload su Google Drive
-    upload_to_drive(output_dir)
-    print(f"Tutti i dati caricati su Google Drive nella cartella {RUN}")
+    try:
+        print("Inizio upload su Google Drive...")
+        upload_to_drive(output_dir)
+        print("Upload completato con successo!")
+    except Exception as e:
+        print(f"Errore durante upload su Drive: {e}")
     
     return output_dir
     
