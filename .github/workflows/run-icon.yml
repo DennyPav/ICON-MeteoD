@@ -9,33 +9,50 @@ on:
   workflow_dispatch:
 
 jobs:
-  run:
+  run-bollettino:
     runs-on: ubuntu-latest
+    env:
+      LC_ALL: it_IT.UTF-8
+      LANG: it_IT.UTF-8
+      LANGUAGE: it_IT.UTF-8
 
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout repository
+      uses: actions/checkout@v4
 
     - name: Setup Python
       uses: actions/setup-python@v5
       with:
-        python-version: '3.11'
+        python-version: "3.11"
 
     - name: Install Python dependencies
       run: |
+        python -m pip install --upgrade pip
         pip install -r requirements.txt
-        pip install pydrive2
-
-    - name: Create Google credentials
-      shell: bash
-      run: |
-        mkdir -p ~/.gcp
-        echo "${GOOGLE_CREDENTIALS_JSON}" | tr -d '\r' > ~/.gcp/meteod_drive.json
-      env:
-        GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
 
     - name: Run ICON2I pipeline
+      run: python icon2i.py
+
+    - name: Install rclone
+      run: curl https://rclone.org/install.sh | sudo bash
+
+    - name: Setup rclone config from secret
       env:
-        GOOGLE_APPLICATION_CREDENTIALS: /home/runner/.gcp/meteod_drive.json
-        GDRIVE_ICON2I_ID: ${{ secrets.GDRIVE_ICON2I_ID }}
+        RCLONE_CONFIG: ${{ secrets.RCLONE_CONFIG }}
       run: |
-        python icon2i.py
+        mkdir -p /home/runner/.config/rclone
+        echo "${RCLONE_CONFIG}" > /home/runner/.config/rclone/rclone.conf
+        chmod 600 /home/runner/.config/rclone/rclone.conf
+
+    - name: Upload JSON output to Google Drive
+      run: |
+        # Determina la cartella del run
+        RUN_FOLDER=$(date +%Y%m%d%H)   # YYYYMMDDHH
+        LOCAL_DIR="./output/${RUN_FOLDER}"
+        REMOTE_DIR="gd_personal:Previsioni/${RUN_FOLDER}"
+
+        # Crea la cartella su Drive se non esiste
+        rclone mkdir "$REMOTE_DIR"
+
+        # Copia tutti i JSON nella cartella del run su Drive
+        rclone copy "$LOCAL_DIR" "$REMOTE_DIR" --include "*.json" -v
