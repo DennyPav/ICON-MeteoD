@@ -20,20 +20,18 @@ jobs:
       with:
         python-version: '3.11'
 
-    - name: Install dependencies
+    - name: Install Python dependencies
       run: |
         pip install -r requirements.txt
+        pip install pydrive2
 
     - name: Create Google credentials
       run: |
         mkdir -p ~/.gcp
-        echo "$GOOGLE_CREDENTIALS_JSON" > ~/.gcp/meteod_drive.json
-      env:
-        GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
-        
-    - name: Install dependencies
-      run: pip install pydrive2
-      
+        cat <<EOF > ~/.gcp/meteod_drive.json
+${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+EOF
+
     - name: Run ICON2I pipeline
       env:
         GOOGLE_APPLICATION_CREDENTIALS: /home/runner/.gcp/meteod_drive.json
