@@ -500,7 +500,7 @@ def process_data():
             cape_raw = np.maximum(data['CAPE_ML']['cape_ml'].values, data['CAPE_CON']['cape_con'].values)
             uh_raw = data['UH_MAX']['unknown'].values
             pmsl_raw = data['PMSL']['pmsl'].values / 100.0
-            asob_s_raw = data['ASOB_S']['msnswrf'].values if 'ASOB_S' in data else np.zeros_like(t2m_raw)
+            asob_s_raw = data['ASOB_S']['avg_snswrf'].values if 'ASOB_S' in data else np.zeros_like(t2m_raw)
             
             t2m = extract_variable(t2m_raw, center_y, center_x, False)
             rh2m = np.clip(extract_variable(rh_raw, center_y, center_x, False), 0, 100)
