@@ -9,6 +9,7 @@ from bs4 import BeautifulSoup
 from collections import Counter
 from pydrive2.auth import GoogleAuth
 from pydrive2.drive import GoogleDrive
+import tempfile
 
 # ------------------- CONFIG -------------------
 WORKDIR = os.getcwd()
@@ -403,42 +404,59 @@ def upload_to_drive(local_dir):
     if not DRIVE_FOLDER_ID or not CREDS_JSON:
         raise RuntimeError("Variabili ambiente GDRIVE_ICON2I_ID o GOOGLE_CREDENTIALS_JSON mancanti")
     
+    # Scrive temporaneamente il JSON in un file
+    with tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix='.json') as tmpfile:
+        tmpfile.write(CREDS_JSON)
+        tmpfile_path = tmpfile.name
+    
     gauth = GoogleAuth()
-    gauth.LoadCredentialsFile(CREDS_JSON)
+    gauth.LoadCredentialsFile(tmpfile_path)
     if gauth.credentials is None:
         gauth.LocalWebserverAuth()
     elif gauth.access_token_expired:
         gauth.Refresh()
     else:
         gauth.Authorize()
-    gauth.SaveCredentialsFile(CREDS_JSON)
+    gauth.SaveCredentialsFile(tmpfile_path)
+    
     drive = GoogleDrive(gauth)
     
     run_basename = os.path.basename(local_dir)
-    folder_list = drive.ListFile({'q': f"'{DRIVE_FOLDER_ID}' in parents and title='{run_basename}' and trashed=false"}).GetList()
+    
+    # Cerca cartella esistente
+    folder_list = drive.ListFile({
+        'q': f"'{DRIVE_FOLDER_ID}' in parents and name='{run_basename}' and trashed=false and mimeType='application/vnd.google-apps.folder'"
+    }).GetList()
+    
     if folder_list:
         folder_id = folder_list[0]['id']
     else:
-        folder_metadata = {
-            'title': run_basename,
-            'parents': [{'id': DRIVE_FOLDER_ID}],
-            'mimeType': 'application/vnd.google-apps.folder'
-        }
+        folder_metadata = {'name': run_basename, 'parents':[{'id':DRIVE_FOLDER_ID}], 'mimeType':'application/vnd.google-apps.folder'}
         folder = drive.CreateFile(folder_metadata)
         folder.Upload()
         folder_id = folder['id']
     
+    # Upload file JSON
     for fname in os.listdir(local_dir):
         if not fname.endswith(".json"):
             continue
         fpath = os.path.join(local_dir, fname)
-        gfile_list = drive.ListFile({'q': f"'{folder_id}' in parents and title='{fname}' and trashed=false"}).GetList()
+        gfile_list = drive.ListFile({
+            'q': f"'{folder_id}' in parents and name='{fname}' and trashed=false"
+        }).GetList()
         if gfile_list:
+            print(f"{fname} già presente su Drive, skip upload")
             continue
-        gfile = drive.CreateFile({'title': fname, 'parents':[{'id': folder_id}]})
+        gfile = drive.CreateFile({'name': fname, 'parents':[{'id': folder_id}]})
         gfile.SetContentFile(fpath)
         gfile.Upload()
         print(f"Caricato {fname} su Drive")
+    
+    print(f"Tutti i file in {local_dir} caricati su Drive nella cartella {run_basename}")
+    
+    # Rimuove il file temporaneo
+    os.remove(tmpfile_path)
+
 
 
 # ------------------- PROCESS DATA -------------------
