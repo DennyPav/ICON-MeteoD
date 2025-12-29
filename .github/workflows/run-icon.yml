@@ -6,7 +6,7 @@ on:
     - cron: "30 3 * * *"
     # 14:30 UTC tutti i giorni
     - cron: "30 14 * * *"
-  workflow_dispatch:  # possibilità di lanciarlo a mano
+  workflow_dispatch:
 
 jobs:
   run:
@@ -26,11 +26,12 @@ jobs:
         pip install pydrive2
 
     - name: Create Google credentials
+      shell: bash
       run: |
         mkdir -p ~/.gcp
-        cat <<EOF > ~/.gcp/meteod_drive.json
-${{ secrets.GOOGLE_CREDENTIALS_JSON }}
-EOF
+        echo "${GOOGLE_CREDENTIALS_JSON}" | tr -d '\r' > ~/.gcp/meteod_drive.json
+      env:
+        GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
 
     - name: Run ICON2I pipeline
       env:
