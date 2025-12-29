@@ -416,33 +416,41 @@ def upload_to_drive(local_dir):
     
     run_basename = os.path.basename(local_dir)
     folder_list = drive.ListFile({'q': f"'{DRIVE_FOLDER_ID}' in parents and title='{run_basename}' and trashed=false"}).GetList()
-    if folder_list: folder_id = folder_list[0]['id']
+    if folder_list:
+        folder_id = folder_list[0]['id']
     else:
-        folder_metadata = {'title': run_basename, 'parents':[{'id':DRIVE_FOLDER_ID}], 'mimeType':'application/vnd.google-apps.folder'}
+        folder_metadata = {
+            'title': run_basename,
+            'parents': [{'id': DRIVE_FOLDER_ID}],
+            'mimeType': 'application/vnd.google-apps.folder'
+        }
         folder = drive.CreateFile(folder_metadata)
         folder.Upload()
         folder_id = folder['id']
     
     for fname in os.listdir(local_dir):
-        if not fname.endswith(".json"): continue
+        if not fname.endswith(".json"):
+            continue
         fpath = os.path.join(local_dir, fname)
         gfile_list = drive.ListFile({'q': f"'{folder_id}' in parents and title='{fname}' and trashed=false"}).GetList()
-        if gfile_list: continue
-        gfile = drive.CreateFile({'title':fname,'parents':[{'id':folder_id}]})
+        if gfile_list:
+            continue
+        gfile = drive.CreateFile({'title': fname, 'parents':[{'id': folder_id}]})
         gfile.SetContentFile(fpath)
         gfile.Upload()
         print(f"Caricato {fname} su Drive")
 
+
 # ------------------- PROCESS DATA -------------------
 def process_data():
-    """PIPELINE COMPLETA: GRIB → JSON ULTRA-COMPATTO per città in WORKDIR/yyyymmddHH"""
     RUN = os.getenv("RUN", "")
     if not RUN:
         run_date, run_hour = get_run_datetime_now_utc()
         RUN = run_date + run_hour
         if not download_icon_data(run_date, run_hour):
             raise RuntimeError("Download GRIB incompleto")
-        with open("build.env", "w") as f: f.write(f"RUN={RUN}\n")
+        with open("build.env", "w") as f:
+            f.write(f"RUN={RUN}\n")
     else:
         run_date, run_hour = RUN[:8], RUN[8:]
         print(f"Usando RUN esistente: {RUN}")
@@ -467,12 +475,8 @@ def process_data():
     # CORREZIONE HSURF ROBUSTA
     if hsurf_da.ndim == 3:
         hsurf_grid = hsurf_da.isel(time=0).values
-    elif hsurf_da.ndim == 2:
-        hsurf_grid = hsurf_da.values
     else:
         hsurf_grid = hsurf_da.values
-        if hsurf_grid.size == 1:
-            hsurf_grid = np.full((lat_grid.shape), hsurf_grid)
     
     venues = load_venues(VENUES_PATH)
     reference_dt = datetime.strptime(RUN, "%Y%m%d%H").replace(tzinfo=timezone.utc)
@@ -484,7 +488,7 @@ def process_data():
         try:
             center_y, center_x = find_land_nearest(lat_grid, lon_grid, info['lat'], info['lon'], hsurf_grid)
             
-            hs_model = hsurf_grid[center_y, center_x]
+            # ESTRAGGO VARIABILI
             t2m_raw = kelvin_to_celsius(data['T_2M']['t2m'].values)
             rh_raw = data['RELHUM']['r'].values
             tp_cum = data['TOT_PREC']['tp'].values
@@ -502,6 +506,7 @@ def process_data():
             pmsl_raw = data['PMSL']['pmsl'].values / 100.0
             asob_s_raw = data['ASOB_S']['avg_snswrf'].values if 'ASOB_S' in data else np.zeros_like(t2m_raw)
             
+            # ESTRAZIONE PUNTI
             t2m = extract_variable(t2m_raw, center_y, center_x, False)
             rh2m = np.clip(extract_variable(rh_raw, center_y, center_x, False), 0, 100)
             tp_h = extract_variable(tp_rate, center_y, center_x, True)
@@ -511,7 +516,7 @@ def process_data():
             clch = extract_variable(clch_raw, center_y, center_x, False)
             pmsl_point = extract_variable(pmsl_raw, center_y, center_x, False)
             
-            t2m_alt, pmsl_corr = altitude_correction(t2m, rh2m, hs_model, info['elev'], pmsl_point)
+            t2m_alt, pmsl_corr = altitude_correction(t2m, rh2m, hsurf_grid[center_y, center_x], info['elev'], pmsl_point)
             t2m_final = t2m_alt
             
             u10 = extract_variable(u10_raw, center_y, center_x, False)
@@ -525,6 +530,7 @@ def process_data():
             uh = extract_variable(uh_raw, center_y, center_x, False)
             asob_s = extract_variable(asob_s_raw, center_y, center_x, False)
             
+            # ORARIO
             hourly_data = []
             for i in range(len(t2m_final)):
                 dt_utc = reference_dt + timedelta(hours=i)
@@ -532,7 +538,6 @@ def process_data():
                 weather_type = classify_weather(t2m_final[i], rh2m[i], clct[i], clcl[i], clcm[i], clch[i],
                                               tp_h[i], spd10_kmh[i], lpi[i], cape[i], uh[i], season, season_thresh, timestep_hours=1)
                 dt_local = utc_to_local(dt_utc)
-                
                 hourly_data.append({
                     "d": dt_local.strftime("%Y%m%d"),
                     "h": dt_local.strftime("%H"),
@@ -543,7 +548,6 @@ def process_data():
                     "v": round(float(spd10_kmh[i]), 1),
                     "vd": wd_card[i],
                     "vg": round(float(vmax10_kmh[i]), 1),
-                    # "s": int(ghi_h),
                     "w": weather_type
                 })
             
@@ -573,7 +577,6 @@ def process_data():
                         "v": round(block_v_mean, 1),
                         "vd": Counter([x["vd"] for x in block]).most_common(1)[0][0],
                         "vg": round(max([x["vg"] for x in block]), 1),
-                        # "s": int(np.mean([x["s"] for x in block])),
                         "w": weather_trio
                     })
             
@@ -604,12 +607,13 @@ def process_data():
             continue
     
     print(f"Salvati {processed}/{len(venues)} JSON ULTRA-COMPATTI in {output_dir}/")
-    return output_dir
-
+    
     # Upload su Google Drive
     upload_to_drive(output_dir)
     print(f"Tutti i dati caricati su Google Drive nella cartella {RUN}")
-
+    
+    return output_dir
+    
 # ------------------- MAIN -------------------
 if __name__ == "__main__":
     process_data()
