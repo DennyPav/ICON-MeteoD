@@ -7,9 +7,6 @@ import xarray as xr
 from datetime import datetime, timedelta, timezone
 from bs4 import BeautifulSoup
 from collections import Counter
-from pydrive2.auth import GoogleAuth
-from pydrive2.drive import GoogleDrive
-import tempfile
 
 # ------------------- CONFIG -------------------
 WORKDIR = os.getcwd()
@@ -396,69 +393,6 @@ def calculate_daily_summaries(hourly_data, clct_daily, clcl_daily, clcm_daily,
 
     return daily_summaries
 
-
-# ------------------- FUNZIONE DI UPLOAD DRIVE -------------------
-def upload_to_drive(local_dir):
-    DRIVE_FOLDER_ID = os.environ.get("GDRIVE_ICON2I_ID")
-    CREDS_JSON = os.environ.get("GOOGLE_CREDENTIALS_JSON")
-    if not DRIVE_FOLDER_ID or not CREDS_JSON:
-        raise RuntimeError("Variabili ambiente GDRIVE_ICON2I_ID o GOOGLE_CREDENTIALS_JSON mancanti")
-    
-    # Scrive temporaneamente il JSON in un file
-    with tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix='.json') as tmpfile:
-        tmpfile.write(CREDS_JSON)
-        tmpfile_path = tmpfile.name
-    
-    gauth = GoogleAuth()
-    gauth.LoadCredentialsFile(tmpfile_path)
-    if gauth.credentials is None:
-        gauth.LocalWebserverAuth()
-    elif gauth.access_token_expired:
-        gauth.Refresh()
-    else:
-        gauth.Authorize()
-    gauth.SaveCredentialsFile(tmpfile_path)
-    
-    drive = GoogleDrive(gauth)
-    
-    run_basename = os.path.basename(local_dir)
-    
-    # Cerca cartella esistente
-    folder_list = drive.ListFile({
-        'q': f"'{DRIVE_FOLDER_ID}' in parents and name='{run_basename}' and trashed=false and mimeType='application/vnd.google-apps.folder'"
-    }).GetList()
-    
-    if folder_list:
-        folder_id = folder_list[0]['id']
-    else:
-        folder_metadata = {'name': run_basename, 'parents':[{'id':DRIVE_FOLDER_ID}], 'mimeType':'application/vnd.google-apps.folder'}
-        folder = drive.CreateFile(folder_metadata)
-        folder.Upload()
-        folder_id = folder['id']
-    
-    # Upload file JSON
-    for fname in os.listdir(local_dir):
-        if not fname.endswith(".json"):
-            continue
-        fpath = os.path.join(local_dir, fname)
-        gfile_list = drive.ListFile({
-            'q': f"'{folder_id}' in parents and name='{fname}' and trashed=false"
-        }).GetList()
-        if gfile_list:
-            print(f"{fname} già presente su Drive, skip upload")
-            continue
-        gfile = drive.CreateFile({'name': fname, 'parents':[{'id': folder_id}]})
-        gfile.SetContentFile(fpath)
-        gfile.Upload()
-        print(f"Caricato {fname} su Drive")
-    
-    print(f"Tutti i file in {local_dir} caricati su Drive nella cartella {run_basename}")
-    
-    # Rimuove il file temporaneo
-    os.remove(tmpfile_path)
-
-
-
 # ------------------- PROCESS DATA -------------------
 def process_data():
     RUN = os.getenv("RUN", "")
@@ -626,17 +560,6 @@ def process_data():
     
     print(f"Salvati {processed}/{len(venues)} JSON ULTRA-COMPATTI in {output_dir}/")
 
-    print("GOOGLE_CREDENTIALS_JSON length:", len(os.environ.get("GOOGLE_CREDENTIALS_JSON", "")))
-    print("GDRIVE_ICON2I_ID:", os.environ.get("GDRIVE_ICON2I_ID", "missing"))
-
-    # Upload su Google Drive
-    try:
-        print("Inizio upload su Google Drive...")
-        upload_to_drive(output_dir)
-        print("Upload completato con successo!")
-    except Exception as e:
-        print(f"Errore durante upload su Drive: {e}")
-    
     return output_dir
     
 # ------------------- MAIN -------------------
