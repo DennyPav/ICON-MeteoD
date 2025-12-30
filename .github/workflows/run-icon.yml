@@ -86,6 +86,6 @@ jobs:
         python icon2i.py
 
         # Termina il loop di upload dopo che Python finisce
-        kill $SYNC_PID
+        kkill $SYNC_PID 2>/dev/null || true
         echo "✅ Upload finale completato"
         log_upload
