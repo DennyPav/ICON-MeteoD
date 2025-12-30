@@ -30,9 +30,6 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
 
-    - name: Run ICON2I pipeline
-      run: python icon2i.py
-
     - name: Install rclone
       run: curl https://rclone.org/install.sh | sudo bash
 
@@ -44,16 +41,14 @@ jobs:
         echo "${RCLONE_CONFIG}" > /home/runner/.config/rclone/rclone.conf
         chmod 600 /home/runner/.config/rclone/rclone.conf
 
-    - name: Upload output to Google Drive
+    - name: Run ICON2I pipeline with background upload
       run: |
         # Determina data e run corretti
-        NOW_HOUR=$(date -u +%H%M)  # ora e minuti UTC, es. 0325
+        NOW_HOUR=$(date -u +%H%M)
         if [ "$NOW_HOUR" -lt 0330 ]; then
-          # Prima delle 03:30 UTC: usa il run 12 del giorno precedente
           DATE=$(date -u -d "yesterday" +%Y%m%d)
           RUN=12
         else
-          # Altrimenti calcola run 00 o 12 del giorno corrente
           DATE=$(date -u +%Y%m%d)
           HOUR=$(date -u +%H)
           if [ "$HOUR" -lt 12 ]; then
@@ -64,7 +59,33 @@ jobs:
         fi
 
         RUN_FOLDER="${DATE}${RUN}"
-        echo "Uploading folder: ./output/$RUN_FOLDER to Google Drive: gd_personal:MeteoD/ICON-2I/$RUN_FOLDER"
+        LOCAL_DIR="./${RUN_FOLDER}"
+        REMOTE_DIR="gd_personal:MeteoD/ICON-2I/${RUN_FOLDER}"
+        mkdir -p "$LOCAL_DIR"
 
-        # Upload con rclone
-        rclone copy ./$RUN_FOLDER gd_personal:MeteoD/ICON-2I/$RUN_FOLDER --drive-chunk-size 64M --verbose
+        echo "📤 Upload in background attivo per $LOCAL_DIR → $REMOTE_DIR ogni minuto"
+
+        # Funzione di log
+        log_upload() {
+          echo "📥 File caricati finora:"
+          rclone lsf "$REMOTE_DIR"
+        }
+
+        # Loop di upload in background ogni minuto
+        (
+          while true; do
+            echo "⏱ Upload in corso: $(date -u)"
+            rclone copy "$LOCAL_DIR" "$REMOTE_DIR" --drive-chunk-size 64M --verbose --ignore-existing
+            log_upload
+            sleep 60
+          done
+        ) &
+        SYNC_PID=$!
+
+        # Esegui lo script Python per generare i file
+        python icon2i.py
+
+        # Termina il loop di upload dopo che Python finisce
+        kill $SYNC_PID
+        echo "✅ Upload finale completato"
+        log_upload
