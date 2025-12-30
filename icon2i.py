@@ -26,9 +26,6 @@ SEASON_THRESHOLDS = {
     "autumn": {"start_day": 264, "end_day": 365, "fog_rh": 96, "haze_rh": 88, "fog_wind": 3.2, "haze_wind": 6.5}
 }
 
-# Magnus coefficients per dew point
-A_MAGNUS, B_MAGNUS = 17.625, 243.04
-
 # ITALIA CET/CEST = UTC+1/UTC+2
 CET = timezone(timedelta(hours=1))
 CEST = timezone(timedelta(hours=2))
@@ -41,10 +38,21 @@ def utc_to_local(dt_utc):
         return dt_utc.astimezone(CEST)
     return dt_utc.astimezone(CET)
 
-def dew_point_celsius(t_c, rh_percent):
-    """Calcola dew point con formula Magnus (precisa ±0.35°C)"""
-    alpha = np.log(rh_percent/100.0) + (A_MAGNUS * t_c) / (B_MAGNUS + t_c)
-    return (B_MAGNUS * alpha) / (A_MAGNUS - alpha)
+def wet_bulb_celsius(t_c, rh_percent, p_hpa):
+    """
+    Calcolo wet-bulb in °C (metodo fisico approssimato)
+    t_c: temperatura aria [°C]
+    rh_percent: umidità relativa [%]
+    p_hpa: pressione atmosferica [hPa]
+    """
+    # Calcola pressione di vapore attuale
+    e = rh_percent / 100.0 * 6.112 * np.exp(17.67 * t_c / (t_c + 243.5))
+    # Formula di Bolton (1980) per wet-bulb
+    tw = t_c * np.arctan(0.151977 * np.sqrt(rh_percent + 8.313659)) \
+         + np.arctan(t_c + rh_percent) - np.arctan(rh_percent - 1.676331) \
+         + 0.00391838 * rh_percent**1.5 * np.arctan(0.023101 * rh_percent) \
+         - 4.686035
+    return tw
 
 def get_run_datetime_now_utc():
     """Determina run ICON-2I disponibile: 00/12 UTC (priorità: attuale → ieri)"""
@@ -150,8 +158,8 @@ def classify_weather(t2m, rh2m, clct, clcl, clcm, clch, tp_rate, wind_kmh, lpi, 
     if (lpi > 2.0 or uh > 50 or cape > 400) and tp_rate > 0.5 * timestep_hours: 
         return "TEMPORALE"
     
-    dew_point = dew_point_celsius(t2m, rh2m)
-    is_snow = dew_point < 0.1
+    wet_bulb = wet_bulb_celsius(t2m, rh2m, pmsl_point[i])
+    is_snow = wet_bulb < 0.1
     low_cloud = clcl if np.isfinite(clcl) else clcm if np.isfinite(clcm) else 0
     
     # SOGLIE ESATTAMENTE COME DEFINITE
