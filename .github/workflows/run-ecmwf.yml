@@ -2,9 +2,7 @@ name: ECMWF MeteoD
 
 on:
   schedule:
-    # 08:30 UTC tutti i giorni
     - cron: "30 8 * * *"
-    # 20:30 UTC tutti i giorni
     - cron: "30 20 * * *"
   workflow_dispatch:
 
@@ -12,9 +10,9 @@ jobs:
   run-bollettino:
     runs-on: ubuntu-latest
     env:
-      LC_ALL: it_IT.UTF-8
-      LANG: it_IT.UTF-8
-      LANGUAGE: it_IT.UTF-8
+      LC_ALL: C.UTF-8
+      LANG: C.UTF-8
+      LANGUAGE: C.UTF-8
 
     steps:
     - name: Checkout repository
@@ -30,6 +28,9 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
 
+    - name: Run ECMWF pipeline
+      run: python ecmwf_pipeline.py
+
     - name: Install rclone
       run: curl https://rclone.org/install.sh | sudo bash
 
@@ -41,53 +42,38 @@ jobs:
         echo "${RCLONE_CONFIG}" > /home/runner/.config/rclone/rclone.conf
         chmod 600 /home/runner/.config/rclone/rclone.conf
 
-    - name: Run ECMWF pipeline with background upload and log
+    - name: Upload output to Google Drive in background
       run: |
-        # Determina data e run in base agli orari dei trigger
+        # Determina data e run corretti
         NOW_HOUR=$(date -u +%H%M)
         if [ "$NOW_HOUR" -lt 0830 ]; then
-          # Prima delle 08:30 UTC → run 12 giorno precedente
           DATE=$(date -u -d "yesterday" +%Y%m%d)
-          RUN=12
-        elif [ "$NOW_HOUR" -lt 2030 ]; then
-          # Tra 08:30 e 20:30 UTC → run 00 del giorno corrente
-          DATE=$(date -u +%Y%m%d)
-          RUN=00
+          RUN=20
         else
-          # Dopo 20:30 UTC → run 12 del giorno corrente
           DATE=$(date -u +%Y%m%d)
-          RUN=12
+          HOUR=$(date -u +%H)
+          if [ "$HOUR" -lt 20 ]; then
+            RUN=08
+          else
+            RUN=20
+          fi
         fi
 
         RUN_FOLDER="${DATE}${RUN}_ECMWF"
-        LOCAL_DIR="./${RUN_FOLDER}"
-        REMOTE_DIR="gd_personal:MeteoD/ECMWF/${RUN_FOLDER}"
+        OUTDIR="./${RUN_FOLDER}"
 
-        mkdir -p "$LOCAL_DIR"
+        echo "📤 Attendo che la cartella $OUTDIR venga creata..."
+        # Aspetta finché la cartella non esiste
+        while [ ! -d "$OUTDIR" ]; do
+          sleep 30
+        done
+        echo "✅ Cartella trovata: $OUTDIR"
 
-        echo "📤 Upload in background attivo per $LOCAL_DIR → $REMOTE_DIR ogni 2 minuti"
-
-        # Funzione log upload
-        log_upload() {
-          echo "📥 File caricati finora:"
-          rclone lsf "$REMOTE_DIR"
-        }
-
-        # Loop di upload in background
+        # Avvia rclone in background ogni minuto
         (
           while true; do
             echo "⏱ Upload in corso: $(date -u)"
-            rclone copy "$LOCAL_DIR" "$REMOTE_DIR" --drive-chunk-size 64M --verbose --ignore-existing
-            log_upload
-            sleep 120
+            rclone copy "$OUTDIR" gd_personal:MeteoD/ECMWF/"$RUN_FOLDER" --drive-chunk-size 64M --verbose --ignore-errors
+            sleep 60
           done
         ) &
-        SYNC_PID=$!
-
-        # Lancia Python per generare i file
-        python ecmwf.py
-
-        # Termina il loop di upload dopo che Python finisce
-        kill $SYNC_PID
-        echo "✅ Upload finale completato"
-        log_upload
