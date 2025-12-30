@@ -29,7 +29,7 @@ jobs:
         pip install -r requirements.txt
 
     - name: Run ECMWF pipeline
-      run: python ecmwf_pipeline.py
+      run: python ecmwf-run.py
 
     - name: Install rclone
       run: curl https://rclone.org/install.sh | sudo bash
