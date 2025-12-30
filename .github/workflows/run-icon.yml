@@ -17,75 +17,100 @@ jobs:
       LANGUAGE: it_IT.UTF-8
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    - name: Setup Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: "3.11"
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
 
-    - name: Install Python dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
-    - name: Install rclone
-      run: curl https://rclone.org/install.sh | sudo bash
+      - name: Install rclone
+        run: curl https://rclone.org/install.sh | sudo bash
 
-    - name: Setup rclone config from secret
-      env:
-        RCLONE_CONFIG: ${{ secrets.RCLONE_CONFIG }}
-      run: |
-        mkdir -p /home/runner/.config/rclone
-        echo "${RCLONE_CONFIG}" > /home/runner/.config/rclone/rclone.conf
-        chmod 600 /home/runner/.config/rclone/rclone.conf
+      - name: Setup rclone config from secret
+        env:
+          RCLONE_CONFIG: ${{ secrets.RCLONE_CONFIG }}
+        run: |
+          mkdir -p /home/runner/.config/rclone
+          echo "${RCLONE_CONFIG}" > /home/runner/.config/rclone/rclone.conf
+          chmod 600 /home/runner/.config/rclone/rclone.conf
 
-    - name: Run ICON2I pipeline with background upload
-      run: |
-        # Determina data e run corretti
-        NOW_HOUR=$(date -u +%H%M)
-        if [ "$NOW_HOUR" -lt 0330 ]; then
-          DATE=$(date -u -d "yesterday" +%Y%m%d)
-          RUN=12
-        else
-          DATE=$(date -u +%Y%m%d)
-          HOUR=$(date -u +%H)
-          if [ "$HOUR" -lt 12 ]; then
-            RUN=00
-          else
+      - name: Run ICON2I pipeline with live upload
+        run: |
+          set -e
+
+          # ===============================
+          # Determina data e run corretti
+          # ===============================
+          NOW_HOUR=$(date -u +%H%M)
+          if [ "$NOW_HOUR" -lt 0330 ]; then
+            DATE=$(date -u -d "yesterday" +%Y%m%d)
             RUN=12
+          else
+            DATE=$(date -u +%Y%m%d)
+            HOUR=$(date -u +%H)
+            if [ "$HOUR" -lt 12 ]; then
+              RUN=00
+            else
+              RUN=12
+            fi
           fi
-        fi
 
-        RUN_FOLDER="${DATE}${RUN}"
-        LOCAL_DIR="./${RUN_FOLDER}"
-        REMOTE_DIR="gd_personal:MeteoD/ICON-2I/${RUN_FOLDER}"
-        mkdir -p "$LOCAL_DIR"
+          RUN_FOLDER="${DATE}${RUN}"
+          LOCAL_DIR="./${RUN_FOLDER}"
+          REMOTE_DIR="gd_personal:MeteoD/ICON-2I/${RUN_FOLDER}"
 
-        echo "📤 Upload in background attivo per $LOCAL_DIR → $REMOTE_DIR ogni minuto"
+          echo "📂 In attesa del primo JSON in: $LOCAL_DIR"
 
-        # Funzione di log
-        log_upload() {
-          echo "📥 File caricati finora:"
-          rclone lsf "$REMOTE_DIR"
-        }
+          # ===============================
+          # Funzione di log (non bloccante)
+          # ===============================
+          log_upload() {
+            echo "📥 File caricati finora:"
+            rclone lsf "$REMOTE_DIR" 2>/dev/null || echo "⚠️ Directory remota non ancora disponibile"
+          }
 
-        # Loop di upload in background ogni minuto
-        (
-          while true; do
-            echo "⏱ Upload in corso: $(date -u)"
-            rclone copy "$LOCAL_DIR" "$REMOTE_DIR" --drive-chunk-size 64M --verbose --ignore-existing
-            log_upload
-            sleep 60
-          done
-        ) &
-        SYNC_PID=$!
+          # ===============================
+          # Loop upload in background
+          # ===============================
+          (
+            # Attende il primo JSON
+            while [ ! -f "$LOCAL_DIR"/*.json ]; do
+              sleep 5
+            done
 
-        # Esegui lo script Python per generare i file
-        python icon2i.py
+            echo "🚀 Primo JSON trovato, avvio upload"
+            rclone mkdir "$REMOTE_DIR" || true
 
-        # Termina il loop di upload dopo che Python finisce
-        kkill $SYNC_PID 2>/dev/null || true
-        echo "✅ Upload finale completato"
-        log_upload
+            while true; do
+              echo "⏱ Upload in corso: $(date -u)"
+              rclone copy "$LOCAL_DIR" "$REMOTE_DIR" \
+                --drive-chunk-size 64M \
+                --ignore-existing \
+                --verbose || true
+
+              log_upload
+              sleep 60
+            done
+          ) &
+          SYNC_PID=$!
+
+          # ===============================
+          # Esecuzione pipeline principale
+          # ===============================
+          python icon2i.py
+
+          # ===============================
+          # Chiusura pulita upload
+          # ===============================
+          kill $SYNC_PID 2>/dev/null || true
+          wait $SYNC_PID 2>/dev/null || true
+
+          echo "✅ Upload finale completato"
+          log_upload
