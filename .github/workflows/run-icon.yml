@@ -46,17 +46,25 @@ jobs:
 
     - name: Upload output to Google Drive
       run: |
-        # Determina la data e il run (00 o 12 UTC)
-        DATE=$(date -u +%Y%m%d)
-        HOUR=$(date -u +%H)
-        if [ "$HOUR" -lt 12 ]; then
-          RUN=00
-        else
+        # Determina data e run corretti
+        NOW_HOUR=$(date -u +%H%M)  # ora e minuti UTC, es. 0325
+        if [ "$NOW_HOUR" -lt 0330 ]; then
+          # Prima delle 03:30 UTC: usa il run 12 del giorno precedente
+          DATE=$(date -u -d "yesterday" +%Y%m%d)
           RUN=12
+        else
+          # Altrimenti calcola run 00 o 12 del giorno corrente
+          DATE=$(date -u +%Y%m%d)
+          HOUR=$(date -u +%H)
+          if [ "$HOUR" -lt 12 ]; then
+            RUN=00
+          else
+            RUN=12
+          fi
         fi
-        RUN_FOLDER="${DATE}${RUN}"
 
+        RUN_FOLDER="${DATE}${RUN}"
         echo "Uploading folder: ./output/$RUN_FOLDER to Google Drive: gd_personal:MeteoD/ICON-2I/$RUN_FOLDER"
-        
+
         # Upload con rclone
         rclone copy ./output/$RUN_FOLDER gd_personal:MeteoD/ICON-2I/$RUN_FOLDER --drive-chunk-size 64M --verbose
