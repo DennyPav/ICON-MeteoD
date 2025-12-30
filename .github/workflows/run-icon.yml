@@ -67,4 +67,4 @@ jobs:
         echo "Uploading folder: ./output/$RUN_FOLDER to Google Drive: gd_personal:MeteoD/ICON-2I/$RUN_FOLDER"
 
         # Upload con rclone
-        rclone copy ./output/$RUN_FOLDER gd_personal:MeteoD/ICON-2I/$RUN_FOLDER --drive-chunk-size 64M --verbose
+        rclone copy ./$RUN_FOLDER gd_personal:MeteoD/ICON-2I/$RUN_FOLDER --drive-chunk-size 64M --verbose
