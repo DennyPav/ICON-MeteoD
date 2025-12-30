@@ -41,7 +41,7 @@ jobs:
           echo "${RCLONE_CONFIG}" > /home/runner/.config/rclone/rclone.conf
           chmod 600 /home/runner/.config/rclone/rclone.conf
 
-      - name: Run ICON2I pipeline and incremental upload
+      - name: Run ICON2I pipeline and upload
         run: |
           set -e
 
@@ -67,55 +67,17 @@ jobs:
           REMOTE_DIR="gd_personal:MeteoD/ICON-2I/${RUN_FOLDER}"
 
           # ===============================
-          # Creazione della cartella remota
-          # ===============================
-          echo "📂 Creo la cartella remota: $REMOTE_DIR"
-          rclone mkdir "$REMOTE_DIR" || true
-
-          # ===============================
-          # Funzione di log
-          # ===============================
-          log_upload() {
-            COUNT=$(rclone lsf "$REMOTE_DIR" 2>/dev/null | wc -l || echo 0)
-            echo "📥 File caricati finora sul remoto: $COUNT"
-          }
-
-          # ===============================
-          # Loop di upload in background
-          # ===============================
-          TOTAL_JSON=160
-          (
-            while true; do
-              # Upload solo se esistono JSON locali
-              if [ -d "$LOCAL_DIR" ] && ls "$LOCAL_DIR"/*.json 1> /dev/null 2>&1; then
-                echo "⏱ Upload in corso: $(date -u)"
-                rclone copy "$LOCAL_DIR" "$REMOTE_DIR" \
-                  --drive-chunk-size 64M \
-                  --ignore-existing \
-                  --verbose || true
-                log_upload
-
-                # Controllo se abbiamo già tutti i 160 JSON sul remoto
-                REMOTE_COUNT=$(rclone lsf "$REMOTE_DIR" 2>/dev/null | wc -l || echo 0)
-                if [ "$REMOTE_COUNT" -ge $TOTAL_JSON ]; then
-                  echo "✅ Tutti i $TOTAL_JSON JSON sono stati caricati sul remoto"
-                  break
-                fi
-              fi
-              sleep 60
-            done
-          ) &
-          SYNC_PID=$!
-
-          # ===============================
           # Esecuzione pipeline principale
           # ===============================
           python icon2i.py
 
           # ===============================
-          # Attende il completamento dell'upload
+          # Upload finale
           # ===============================
-          wait $SYNC_PID 2>/dev/null || true
+          echo "🚀 Upload dei file in $LOCAL_DIR → $REMOTE_DIR"
+          rclone mkdir "$REMOTE_DIR" || true
+          rclone copy "$LOCAL_DIR" "$REMOTE_DIR" --drive-chunk-size 64M --ignore-existing --verbose || true
 
-          echo "🚀 Upload finale completato"
-          log_upload
+          echo "✅ Upload completato"
+          echo "📥 File caricati sul remoto:"
+          rclone lsf "$REMOTE_DIR" 2>/dev/null || echo "⚠️ Directory remota non disponibile"
