@@ -67,17 +67,18 @@ jobs:
           REMOTE_DIR="gd_personal:MeteoD/ICON-2I/${RUN_FOLDER}"
 
           # ===============================
+          # Creazione della cartella remota
+          # ===============================
+          rclone mkdir "$REMOTE_DIR" || true
+
+          # ===============================
           # Esecuzione pipeline principale
           # ===============================
           python icon2i.py
 
           # ===============================
-          # Upload finale
+          # Upload finale con statistiche
           # ===============================
-          echo "🚀 Upload dei file in $LOCAL_DIR → $REMOTE_DIR"
-          rclone mkdir "$REMOTE_DIR" || true
           rclone copy "$LOCAL_DIR" "$REMOTE_DIR" --drive-chunk-size 64M --ignore-existing --verbose || true
 
-          echo "✅ Upload completato"
-          echo "📥 File caricati sul remoto:"
-          rclone lsf "$REMOTE_DIR" 2>/dev/null || echo "⚠️ Directory remota non disponibile"
+          echo "✅ Upload finale completato"
