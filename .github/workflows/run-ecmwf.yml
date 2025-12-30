@@ -42,7 +42,7 @@ jobs:
         echo "${RCLONE_CONFIG}" > /home/runner/.config/rclone/rclone.conf
         chmod 600 /home/runner/.config/rclone/rclone.conf
 
-    - name: Upload output to Google Drive in background
+    - name: Upload output to Google Drive
       run: |
         # Determina data e run corretti
         NOW_HOUR=$(date -u +%H%M)
@@ -63,17 +63,36 @@ jobs:
         OUTDIR="./${RUN_FOLDER}"
 
         echo "📤 Attendo che la cartella $OUTDIR venga creata..."
-        # Aspetta finché la cartella non esiste
-        while [ ! -d "$OUTDIR" ]; do
+        # Aspetta finché la cartella non esiste (max 30 min)
+        MAX_WAIT=1800
+        WAITED=0
+        while [ ! -d "$OUTDIR" ] && [ $WAITED -lt $MAX_WAIT ]; do
+          sleep 10
+          WAITED=$((WAITED+10))
+        done
+
+        if [ ! -d "$OUTDIR" ]; then
+          echo "Cartella $OUTDIR non trovata dopo 30 min, esco"
+          exit 1
+        fi
+
+        echo "Cartella trovata: $OUTDIR"
+        echo "Upload in corso..."
+
+        # Upload con retry (3 tentativi)
+        RETRIES=3
+        COUNT=0
+        until [ $COUNT -ge $RETRIES ]
+        do
+          rclone copy "$OUTDIR" gd_personal:MeteoD/ECMWF/"$RUN_FOLDER" --drive-chunk-size 64M --verbose --ignore-errors && break
+          COUNT=$((COUNT+1))
+          echo "⚠ Tentativo $COUNT fallito, riprovo tra 30 secondi..."
           sleep 30
         done
-        echo "✅ Cartella trovata: $OUTDIR"
 
-        # Avvia rclone in background ogni minuto
-        (
-          while true; do
-            echo "⏱ Upload in corso: $(date -u)"
-            rclone copy "$OUTDIR" gd_personal:MeteoD/ECMWF/"$RUN_FOLDER" --drive-chunk-size 64M --verbose --ignore-errors
-            sleep 60
-          done
-        ) &
+        if [ $COUNT -eq $RETRIES ]; then
+          echo "Upload fallito dopo $RETRIES tentativi"
+          exit 1
+        fi
+
+        echo "✅ Upload completato!"
