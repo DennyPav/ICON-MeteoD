@@ -5,10 +5,8 @@ from ecmwf.opendata import Client
 
 WORKDIR = os.getcwd()
 
-# =========================
-# RUN TIME LOGIC
-# =========================
 def get_run_datetime_now_utc():
+    from datetime import datetime, timezone, timedelta
     now = datetime.now(timezone.utc)
     if now.hour < 8:
         return (now - timedelta(days=1)).strftime("%Y%m%d"), "00"
@@ -16,117 +14,54 @@ def get_run_datetime_now_utc():
         return now.strftime("%Y%m%d"), "00"
     return now.strftime("%Y%m%d"), "12"
 
-# =========================
-# UTILS
-# =========================
-def file_ok(path, min_size):
-    return os.path.exists(path) and os.path.getsize(path) > min_size
-
-def safe_retrieve(client, target, min_size, **kwargs):
-    if file_ok(target, min_size):
-        print(f"✔ File già valido: {os.path.basename(target)}")
-        return
-    if os.path.exists(target):
-        print(f"⚠ File incompleto, rimuovo: {os.path.basename(target)}")
-        os.remove(target)
-
-    print(f"⬇ Download {os.path.basename(target)}")
-    client.retrieve(target=target, **kwargs)
-
-    if not file_ok(target, min_size):
-        raise RuntimeError(f"❌ Download fallito: {target}")
-
-# =========================
-# MAIN DOWNLOAD
-# =========================
-def main():
-    run_date, run_hour = get_run_datetime_now_utc()
-    RUN = f"{run_date}{run_hour}"
-
-    grib_dir = f"{WORKDIR}/grib_ecmwf/{RUN}"
-    os.makedirs(grib_dir, exist_ok=True)
-
-    print(f"\n📥 ECMWF DOWNLOAD RUN {RUN}\n")
-
-    client = Client(
-        source="ecmwf",
-        model="ifs",
-        resol="0p25"
-    )
-
-    # ------------------------
-    # STEP DEFINITIONS
-    # ------------------------
+def download_ecmwf_triorario(run_date, run_hour):
     steps_tri = list(range(0, 144, 3))
-    steps_esa = list(range(144, 331, 6)) if run_hour == "00" else list(range(144, 319, 6))
+    grib_dir = f"{WORKDIR}/grib_ecmwf/{run_date}{run_hour}"
+    os.makedirs(grib_dir, exist_ok=True)
+    main_file = f"{grib_dir}/ecmwf_main_tri.grib"
+    wind_file = f"{grib_dir}/ecmwf_wind_tri.grib"
+    orog_file = f"{grib_dir}/ecmwf_orog.grib"
 
-    # ------------------------
-    # FILE PATHS
-    # ------------------------
-    main_tri = f"{grib_dir}/ecmwf_main_tri.grib"
-    wind_tri = f"{grib_dir}/ecmwf_wind_tri.grib"
-    main_esa = f"{grib_dir}/ecmwf_main_esa.grib"
-    orog = f"{grib_dir}/ecmwf_orog.grib"
+    # Controllo esistenza file
+    if os.path.exists(main_file) and os.path.getsize(main_file) > 30_000_000 \
+       and os.path.exists(wind_file) and os.path.getsize(wind_file) > 5_000_000 \
+       and os.path.exists(orog_file) and os.path.getsize(orog_file) > 1_000:
+        print(f"GRIB triorario già presenti in {grib_dir}, salto download")
+        return main_file, wind_file, orog_file
 
-    # ------------------------
-    # DOWNLOAD TRIORARIO
-    # ------------------------
-    safe_retrieve(
-        client,
-        target=main_tri,
-        min_size=30_000_000,
-        date=run_date,
-        time=int(run_hour),
-        stream="oper",
-        type="fc",
-        step=steps_tri,
-        param=["2t", "2d", "tcc", "msl", "tp", "mucape"]
-    )
+    client = Client(source="ecmwf", model="ifs", resol="0p25")
+    print("⏬ Download ECMWF triorario...")
+    client.retrieve(date=run_date, time=int(run_hour), stream="oper", type="fc",
+                    step=steps_tri, param=["2t","2d","tcc","msl","tp","mucape"], target=main_file)
+    client.retrieve(date=run_date, time=int(run_hour), stream="oper", type="fc",
+                    step=steps_tri, param=["10u","10v"], target=wind_file)
+    client.retrieve(date=run_date, time=int(run_hour), stream="oper", type="fc",
+                    step=[0], param=["z"], target=orog_file)
+    return main_file, wind_file, orog_file
 
-    safe_retrieve(
-        client,
-        target=wind_tri,
-        min_size=5_000_000,
-        date=run_date,
-        time=int(run_hour),
-        stream="oper",
-        type="fc",
-        step=steps_tri,
-        param=["10u", "10v"]
-    )
+def download_ecmwf_esaorario(run_date, run_hour):
+    steps_esa = list(range(144, 331, 6)) if run_hour=="00" else list(range(144, 319, 6))
+    grib_dir = f"{WORKDIR}/grib_ecmwf/{run_date}{run_hour}"
+    os.makedirs(grib_dir, exist_ok=True)
+    main_file_esa = f"{grib_dir}/ecmwf_main_esa.grib"
+    orog_file = f"{grib_dir}/ecmwf_orog.grib"
 
-    # ------------------------
-    # DOWNLOAD ESAORARIO
-    # ------------------------
-    safe_retrieve(
-        client,
-        target=main_esa,
-        min_size=30_000_000,
-        date=run_date,
-        time=int(run_hour),
-        stream="oper",
-        type="fc",
-        step=steps_esa,
-        param=["2t", "2d", "tcc", "msl", "tp", "mucape"]
-    )
+    if os.path.exists(main_file_esa) and os.path.getsize(main_file_esa) > 30_000_000 \
+       and os.path.exists(orog_file) and os.path.getsize(orog_file) > 1_000:
+        print(f"GRIB esaorario già presenti in {grib_dir}, salto download")
+        return main_file_esa, orog_file
 
-    # ------------------------
-    # OROGRAFIA (UNA SOLA VOLTA)
-    # ------------------------
-    safe_retrieve(
-        client,
-        target=orog,
-        min_size=1_000,
-        date=run_date,
-        time=int(run_hour),
-        stream="oper",
-        type="fc",
-        step=[0],
-        param=["z"]
-    )
+    client = Client(source="ecmwf", model="ifs", resol="0p25")
+    print("⏬ Download ECMWF esaorario...")
+    client.retrieve(date=run_date, time=int(run_hour), stream="oper", type="fc",
+                    step=steps_esa, param=["2t","2d","tcc","msl","tp","mucape"], target=main_file_esa)
+    client.retrieve(date=run_date, time=int(run_hour), stream="oper", type="fc",
+                    step=[0], param=["z"], target=orog_file)
+    return main_file_esa, orog_file
 
-    print(f"\n✅ DOWNLOAD COMPLETATO — {RUN}")
-    print(f"📂 {grib_dir}\n")
-
-if __name__ == "__main__":
-    main()
+if __name__=="__main__":
+    run_date, run_hour = get_run_datetime_now_utc()
+    print(f"RUN ECMWF {run_date}{run_hour}")
+    download_ecmwf_triorario(run_date, run_hour)
+    download_ecmwf_esaorario(run_date, run_hour)
+    print("Download completato ✅")
