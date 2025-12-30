@@ -44,15 +44,19 @@ jobs:
         echo "${RCLONE_CONFIG}" > /home/runner/.config/rclone/rclone.conf
         chmod 600 /home/runner/.config/rclone/rclone.conf
 
-    - name: Upload JSON output to Google Drive
+    - name: Upload output to Google Drive
       run: |
-        # Determina la cartella del run
-        RUN_FOLDER=$(date +%Y%m%d%H)   # YYYYMMDDHH
-        LOCAL_DIR="./output/${RUN_FOLDER}"
-        REMOTE_DIR="gd_personal:Previsioni/${RUN_FOLDER}"
+        # Determina la data e il run (00 o 12 UTC)
+        DATE=$(date -u +%Y%m%d)
+        HOUR=$(date -u +%H)
+        if [ "$HOUR" -lt 12 ]; then
+          RUN=00
+        else
+          RUN=12
+        fi
+        RUN_FOLDER="${DATE}${RUN}"
 
-        # Crea la cartella su Drive se non esiste
-        rclone mkdir "$REMOTE_DIR"
-
-        # Copia tutti i JSON nella cartella del run su Drive
-        rclone copy "$LOCAL_DIR" "$REMOTE_DIR" --include "*.json" -v
+        echo "Uploading folder: ./output/$RUN_FOLDER to Google Drive: gd_personal:MeteoD/ICON-2I/$RUN_FOLDER"
+        
+        # Upload con rclone
+        rclone copy ./output/$RUN_FOLDER gd_personal:MeteoD/ICON-2I/$RUN_FOLDER --drive-chunk-size 64M --verbose
