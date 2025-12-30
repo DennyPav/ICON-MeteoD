@@ -38,16 +38,10 @@ def utc_to_local(dt_utc):
         return dt_utc.astimezone(CEST)
     return dt_utc.astimezone(CET)
 
-def wet_bulb_celsius(t_c, rh_percent, p_hpa):
+def wet_bulb_celsius(t_c, rh_percent):
     """
-    Calcolo wet-bulb in °C (metodo fisico approssimato)
-    t_c: temperatura aria [°C]
-    rh_percent: umidità relativa [%]
-    p_hpa: pressione atmosferica [hPa]
+    Calcolo wet-bulb approssimato solo da temperatura [°C] e umidità [%]
     """
-    # Calcola pressione di vapore attuale
-    e = rh_percent / 100.0 * 6.112 * np.exp(17.67 * t_c / (t_c + 243.5))
-    # Formula di Bolton (1980) per wet-bulb
     tw = t_c * np.arctan(0.151977 * np.sqrt(rh_percent + 8.313659)) \
          + np.arctan(t_c + rh_percent) - np.arctan(rh_percent - 1.676331) \
          + 0.00391838 * rh_percent**1.5 * np.arctan(0.023101 * rh_percent) \
@@ -158,7 +152,7 @@ def classify_weather(t2m, rh2m, clct, clcl, clcm, clch, tp_rate, wind_kmh, lpi, 
     if (lpi > 2.0 or uh > 50 or cape > 400) and tp_rate > 0.5 * timestep_hours: 
         return "TEMPORALE"
     
-    wet_bulb = wet_bulb_celsius(t2m, rh2m, pmsl_point[i])
+    wet_bulb = wet_bulb_celsius(t2m, rh2m)
     is_snow = wet_bulb < 0.1
     low_cloud = clcl if np.isfinite(clcl) else clcm if np.isfinite(clcm) else 0
     
