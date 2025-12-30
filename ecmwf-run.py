@@ -182,7 +182,7 @@ def calculate_daily_summaries(trihourly_data, clct_daily, tp_rate_daily, mucape_
 def process_ecmwf_data():
     run_date, run_hour = get_run_datetime_now_utc()
     RUN_DATE_TIME=f"{run_date}{run_hour}"
-    RUN=f"{RUN_DATE_TIME}_ecmwf"
+    RUN=f"{RUN_DATE_TIME}"
     
     print(f"Elaborazione ECMWF {RUN}")
     
@@ -300,7 +300,7 @@ def process_ecmwf_data():
                 "GIORNALIERO":daily_all
             }
             
-            with open(f"{outdir}/{city}_ecmwf.json",'w',encoding='utf-8') as f:
+            with open(f"{outdir}/{city}.json",'w',encoding='utf-8') as f:
                 json.dump(city_data,f,separators=(',',':'),ensure_ascii=False)
             
             processed+=1
