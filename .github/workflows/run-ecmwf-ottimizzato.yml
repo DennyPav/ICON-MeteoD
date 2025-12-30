@@ -7,79 +7,71 @@ on:
   workflow_dispatch:
 
 jobs:
-  download:
+  download-ecmwf:
     runs-on: ubuntu-latest
     env:
       LC_ALL: C.UTF-8
       LANG: C.UTF-8
-      LANGUAGE: C.UTF-8
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+    - name: Checkout repository
+      uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
 
-      - name: Install Python dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
 
-      - name: Run ECMWF download
-        run: python download_ecmwf.py
+    - name: Download ECMWF GRIB files
+      run: python ecmwf-download.py
 
-      - name: Upload GRIBs as artifact
-        uses: actions/upload-artifact@v3
-        with:
-          name: grib_files
-          path: grib_ecmwf/
+    - name: Upload GRIB files as artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: grib_files
+        path: grib_ecmwf/
+        retention-days: 1
 
-  process:
+  process-ecmwf:
     runs-on: ubuntu-latest
-    needs: download
+    needs: download-ecmwf
     env:
       LC_ALL: C.UTF-8
       LANG: C.UTF-8
-      LANGUAGE: C.UTF-8
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+    - name: Checkout repository
+      uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
 
-      - name: Install Python dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
 
-      - name: Download GRIBs from artifact
-        uses: actions/download-artifact@v3
-        with:
-          name: grib_files
-          path: grib_ecmwf/
+    - name: Download GRIB artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: grib_files
+        path: grib_ecmwf/
 
-      - name: Run ECMWF process
-        run: python process_ecmwf.py
+    - name: Run ECMWF processing
+      run: python ecmwf-process.py
 
-      - name: Install rclone
-        run: curl https://rclone.org/install.sh | sudo bash
-
-      - name: Setup rclone config from secret
-        env:
-          RCLONE_CONFIG: ${{ secrets.RCLONE_CONFIG }}
-        run: |
-          mkdir -p /home/runner/.config/rclone
-          echo "${RCLONE_CONFIG}" > /home/runner/.config/rclone/rclone.conf
-          chmod 600 /home/runner/.config/rclone/rclone.conf
-
-      - name: Upload output to Google Drive
-        run: |
-          RUN_FOLDER=$(ls grib_ecmwf | sort | tail -n1)
-          rclone copy "./${RUN_FOLDER}" gd_personal:MeteoD/ECMWF/"$RUN_FOLDER" --drive-chunk-size 64M --verbose --ignore-errors
+    - name: Upload JSON output to Google Drive
+      run: |
+        python -m pip install --upgrade pip
+        pip install rclone
+        mkdir -p /home/runner/.config/rclone
+        echo "${{ secrets.RCLONE_CONFIG }}" > /home/runner/.config/rclone/rclone.conf
+        chmod 600 /home/runner/.config/rclone/rclone.conf
+        rclone copy ./YYYYMMDDHH gd_personal:MeteoD/ECMWF/YYYYMMDDHH --drive-chunk-size 64M --verbose --ignore-errors
