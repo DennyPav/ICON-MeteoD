@@ -59,7 +59,7 @@ jobs:
           fi
         fi
 
-        RUN_FOLDER="${DATE}${RUN}_ecmwf"
+        RUN_FOLDER="${DATE}${RUN}"
         OUTDIR="./${RUN_FOLDER}"
 
         echo "📤 Attendo che la cartella $OUTDIR venga creata..."
