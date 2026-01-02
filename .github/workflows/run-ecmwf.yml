@@ -44,7 +44,6 @@ jobs:
 
     - name: Upload output to Google Drive
       run: |
-        # Determina data e run corretti
         NOW_HOUR=$(date -u +%H%M)
         if [ "$NOW_HOUR" -lt 0830 ]; then
           DATE=$(date -u -d "yesterday" +%Y%m%d)
@@ -62,8 +61,7 @@ jobs:
         RUN_FOLDER="${DATE}${RUN}"
         OUTDIR="./${RUN_FOLDER}"
 
-        echo "📤 Attendo che la cartella $OUTDIR venga creata..."
-        # Aspetta finché la cartella non esiste (max 30 min)
+        echo "Attendo che la cartella $OUTDIR venga creata..."
         MAX_WAIT=1800
         WAITED=0
         while [ ! -d "$OUTDIR" ] && [ $WAITED -lt $MAX_WAIT ]; do
@@ -72,21 +70,20 @@ jobs:
         done
 
         if [ ! -d "$OUTDIR" ]; then
-          echo "Cartella $OUTDIR non trovata dopo 30 min, esco"
+          echo "Cartella $OUTDIR non trovata dopo 30 minuti"
           exit 1
         fi
 
         echo "Cartella trovata: $OUTDIR"
         echo "Upload in corso..."
 
-        # Upload con retry (3 tentativi)
         RETRIES=3
         COUNT=0
         until [ $COUNT -ge $RETRIES ]
         do
           rclone copy "$OUTDIR" gd_personal:MeteoD/ECMWF/"$RUN_FOLDER" --drive-chunk-size 64M --verbose --ignore-errors && break
           COUNT=$((COUNT+1))
-          echo "⚠ Tentativo $COUNT fallito, riprovo tra 30 secondi..."
+          echo "Tentativo $COUNT fallito, riprovo tra 30 secondi..."
           sleep 30
         done
 
@@ -95,4 +92,4 @@ jobs:
           exit 1
         fi
 
-        echo "✅ Upload completato!"
+        echo "Upload completato"
