@@ -10,86 +10,73 @@ jobs:
   run-bollettino:
     runs-on: ubuntu-latest
     env:
-      LC_ALL: C.UTF-8
-      LANG: C.UTF-8
-      LANGUAGE: C.UTF-8
+      LC_ALL: it_IT.UTF-8
+      LANG: it_IT.UTF-8
+      LANGUAGE: it_IT.UTF-8
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    - name: Setup Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: "3.11"
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
 
-    - name: Install Python dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
-    - name: Run ECMWF pipeline
-      run: python ecmwf-run.py
+      - name: Install rclone
+        run: curl https://rclone.org/install.sh | sudo bash
 
-    - name: Install rclone
-      run: curl https://rclone.org/install.sh | sudo bash
+      - name: Setup rclone config from secret
+        env:
+          RCLONE_CONFIG: ${{ secrets.RCLONE_CONFIG }}
+        run: |
+          mkdir -p /home/runner/.config/rclone
+          echo "${RCLONE_CONFIG}" > /home/runner/.config/rclone/rclone.conf
+          chmod 600 /home/runner/.config/rclone/rclone.conf
 
-    - name: Setup rclone config from secret
-      env:
-        RCLONE_CONFIG: ${{ secrets.RCLONE_CONFIG }}
-      run: |
-        mkdir -p /home/runner/.config/rclone
-        echo "${RCLONE_CONFIG}" > /home/runner/.config/rclone/rclone.conf
-        chmod 600 /home/runner/.config/rclone/rclone.conf
+      - name: Run ICON2I pipeline and upload
+        run: |
+          set -e
 
-    - name: Upload output to Google Drive
-      run: |
-        NOW_HOUR=$(date -u +%H%M)
-        if [ "$NOW_HOUR" -lt 0830 ]; then
-          DATE=$(date -u -d "yesterday" +%Y%m%d)
-          RUN=20
-        else
-          DATE=$(date -u +%Y%m%d)
-          HOUR=$(date -u +%H)
-          if [ "$HOUR" -lt 20 ]; then
-            RUN=08
+          # ===============================
+          # Determina data e run corretti
+          # ===============================
+          NOW_HOUR=$(date -u +%H%M)
+          if [ "$NOW_HOUR" -lt 0830 ]; then
+            DATE=$(date -u -d "yesterday" +%Y%m%d)
+            RUN=12
           else
-            RUN=20
+            DATE=$(date -u +%Y%m%d)
+            HOUR=$(date -u +%H)
+            if [ "$HOUR" -lt 12 ]; then
+              RUN=00
+            else
+              RUN=12
+            fi
           fi
-        fi
 
-        RUN_FOLDER="${DATE}${RUN}"
-        OUTDIR="./${RUN_FOLDER}"
+          RUN_FOLDER="${DATE}${RUN}"
+          LOCAL_DIR="./${RUN_FOLDER}"
+          REMOTE_DIR="gd_personal:MeteoD/ECMWF/${RUN_FOLDER}"
 
-        echo "Attendo che la cartella $OUTDIR venga creata..."
-        MAX_WAIT=1800
-        WAITED=0
-        while [ ! -d "$OUTDIR" ] && [ $WAITED -lt $MAX_WAIT ]; do
-          sleep 10
-          WAITED=$((WAITED+10))
-        done
+          # ===============================
+          # Creazione della cartella remota
+          # ===============================
+          rclone mkdir "$REMOTE_DIR" || true
 
-        if [ ! -d "$OUTDIR" ]; then
-          echo "Cartella $OUTDIR non trovata dopo 30 minuti"
-          exit 1
-        fi
+          # ===============================
+          # Esecuzione pipeline principale
+          # ===============================
+          python ecmwf-run.py
 
-        echo "Cartella trovata: $OUTDIR"
-        echo "Upload in corso..."
+          # ===============================
+          # Upload finale con statistiche
+          # ===============================
+          rclone copy "$LOCAL_DIR" "$REMOTE_DIR" --drive-chunk-size 64M --ignore-existing --verbose || true
 
-        RETRIES=3
-        COUNT=0
-        until [ $COUNT -ge $RETRIES ]
-        do
-          rclone copy "$OUTDIR" gd_personal:MeteoD/ECMWF/"$RUN_FOLDER" --drive-chunk-size 64M --verbose --ignore-errors && break
-          COUNT=$((COUNT+1))
-          echo "Tentativo $COUNT fallito, riprovo tra 30 secondi..."
-          sleep 30
-        done
-
-        if [ $COUNT -eq $RETRIES ]; then
-          echo "Upload fallito dopo $RETRIES tentativi"
-          exit 1
-        fi
-
-        echo "Upload completato"
+          echo "✅ Upload finale completato"
