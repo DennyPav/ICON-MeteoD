@@ -6,6 +6,7 @@ import xarray as xr
 from datetime import datetime, timedelta, timezone
 from ecmwf.opendata import Client
 
+# ---------------------- CONFIGURAZIONE ----------------------
 WORKDIR = os.getcwd()
 VENUES_PATH = f"{WORKDIR}/comuni_italia.json"
 
@@ -25,6 +26,7 @@ SEASON_THRESHOLDS = {
 CET = timezone(timedelta(hours=1))
 CEST = timezone(timedelta(hours=2))
 
+# ---------------------- FUNZIONI UTILI ----------------------
 def utc_to_local(dt_utc):
     m, d = dt_utc.month, dt_utc.day
     if (m > 3 and m < 10) or (m == 3 and d >= 25) or (m == 10 and d <= 25):
@@ -46,6 +48,20 @@ def get_run_datetime_now_utc():
         return now.strftime("%Y%m%d"), "00"
     return now.strftime("%Y%m%d"), "12"
 
+# ---------------------- FUNZIONI PER DOWNLOAD E RITAGLIO ----------------------
+def crop_grib_italy_xarray(infile):
+    """
+    Ritaglia un file GRIB globale sulle coordinate dell'Italia
+    e lo salva come NetCDF (più leggero e stabile).
+    """
+    ds = xr.open_dataset(infile, engine="cfgrib")
+    ds_it = ds.sel(longitude=slice(6,19), latitude=slice(48,35))
+    outfile = infile.replace(".grib", ".nc")
+    ds_it.to_netcdf(outfile)
+    ds.close()
+    ds_it.close()
+    return outfile
+
 def download_ecmwf_triorario(run_date, run_hour):
     steps_tri = list(range(0, 144, 3))
     grib_dir = f"{WORKDIR}/grib_ecmwf/{run_date}{run_hour}"
@@ -63,6 +79,12 @@ def download_ecmwf_triorario(run_date, run_hour):
     if not os.path.exists(orog_file) or os.path.getsize(orog_file)<1_000:
         client.retrieve(date=run_date, time=int(run_hour), stream="oper", type="fc",
                         step=[0], param=["z"], target=orog_file)
+
+    # --- RITAGLIO XARRAY ---
+    main_file = crop_grib_italy_xarray(main_file)
+    wind_file = crop_grib_italy_xarray(wind_file)
+    orog_file = crop_grib_italy_xarray(orog_file)
+
     return main_file, wind_file, orog_file
 
 def download_ecmwf_esaorario(run_date, run_hour):
@@ -78,9 +100,14 @@ def download_ecmwf_esaorario(run_date, run_hour):
     if not os.path.exists(orog_file) or os.path.getsize(orog_file)<1_000:
         client.retrieve(date=run_date, time=int(run_hour), stream="oper", type="fc",
                         step=[0], param=["z"], target=orog_file)
+
+    # --- RITAGLIO XARRAY ---
+    main_file_esa = crop_grib_italy_xarray(main_file_esa)
+    orog_file = crop_grib_italy_xarray(orog_file)
+
     return main_file_esa, orog_file
 
-# Conversioni
+# ---------------------- CONVERSIONI ----------------------
 def kelvin_to_celsius(k): return k-273.15
 def mps_to_kmh(mps): return mps*3.6
 
@@ -105,6 +132,7 @@ def get_season_precise(dt_utc):
             return season, thresh
     return "winter", SEASON_THRESHOLDS["winter"]
 
+# ---------------------- CORREZIONE ALTITUDINE ----------------------
 G = 9.80665
 RD = 287.05
 def altitude_correction(t2m, rh, z_model, z_station, pmsl):
@@ -116,6 +144,7 @@ def altitude_correction(t2m, rh, z_model, z_station, pmsl):
     p_corr = pmsl*np.exp(-G*z_station/(RD*T_mean))
     return t_corr, p_corr
 
+# ---------------------- CLASSIFICAZIONE METEO ----------------------
 def classify_weather(t2m, rh2m, clct, tp_rate, wind_kmh, mucape, season_thresh, timestep_hours=3):
     if mucape>400 and tp_rate>0.5*timestep_hours:
         return "TEMPORALE"
@@ -149,6 +178,7 @@ def classify_weather(t2m, rh2m, clct, tp_rate, wind_kmh, mucape, season_thresh, 
     elif octas<=6: return "NUVOLOSO"
     return "COPERTO"
 
+# ---------------------- CARICAMENTO COMUNI ----------------------
 def load_venues(file_path):
     with open(file_path,'r',encoding='utf-8') as f:
         data=json.load(f)
@@ -156,6 +186,7 @@ def load_venues(file_path):
     print(f"Caricate {len(venues)} città")
     return venues
 
+# ---------------------- RIEPILOGO GIORNALIERO ----------------------
 def calculate_daily_summaries(trihourly_data, clct_daily, tp_rate_daily, mucape_daily, season_thresh, timestep_hours):
     daily_summaries=[]
     days_data={}
@@ -170,7 +201,6 @@ def calculate_daily_summaries(trihourly_data, clct_daily, tp_rate_daily, mucape_
         tp_total=sum([record["p"] for _,record in day_records])
         t_mean=np.mean(day_temps)
         r_mean=np.mean([record["r"] for _,record in day_records])
-        # vento fisso 5 km/h se la chiave 'v' non esiste (ESAORARIO)
         v_mean=np.mean([record.get("v",5.0) for _,record in day_records])
         first_idx=day_records[0][0]
         weather_day=classify_weather(t_mean,r_mean,clct_daily[first_idx],
@@ -179,27 +209,23 @@ def calculate_daily_summaries(trihourly_data, clct_daily, tp_rate_daily, mucape_
         daily_summaries.append({"d":day,"tmin":t_min,"tmax":t_max,"p":round(tp_total,1),"w":weather_day})
     return daily_summaries
 
+# ---------------------- PROCESSAMENTO ----------------------
 def process_ecmwf_data():
     run_date, run_hour = get_run_datetime_now_utc()
     RUN_DATE_TIME=f"{run_date}{run_hour}"
-    RUN=f"{RUN_DATE_TIME}"
+    RUN=f"{RUN_DATE_TIME}_ecmwf"
     
     print(f"Elaborazione ECMWF {RUN}")
     
-    # DOWNLOAD
+    # DOWNLOAD + RITAGLIO
     main_file_tri, wind_file_tri, orog_file = download_ecmwf_triorario(run_date,run_hour)
     main_file_esa, _ = download_ecmwf_esaorario(run_date,run_hour)
     
-    # CARICAMENTO
-    ds_main_tri=xr.open_dataset(main_file_tri,engine="cfgrib")
-    ds_wind_tri=xr.open_dataset(wind_file_tri,engine="cfgrib")
-    ds_main_esa=xr.open_dataset(main_file_esa,engine="cfgrib")
-    ds_orog=xr.open_dataset(orog_file,engine="cfgrib")
-    
-    print("Main dataset triorario variables:",list(ds_main_tri.data_vars.keys()))
-    print("Wind dataset triorario variables:",list(ds_wind_tri.data_vars.keys()))
-    print("Main dataset esa variables:",list(ds_main_esa.data_vars.keys()))
-    print("Orog dataset variables:",list(ds_orog.data_vars.keys()))
+    # CARICAMENTO DATASET NETCDF
+    ds_main_tri=xr.open_dataset(main_file_tri)
+    ds_wind_tri=xr.open_dataset(wind_file_tri)
+    ds_main_esa=xr.open_dataset(main_file_esa)
+    ds_orog=xr.open_dataset(orog_file)
     
     venues=load_venues(VENUES_PATH)
     ref_dt=datetime.strptime(RUN_DATE_TIME,"%Y%m%d%H").replace(tzinfo=timezone.utc)
@@ -258,61 +284,69 @@ def process_ecmwf_data():
             t2m_k_esa=ds_main_esa["t2m"].isel(latitude=lat_idx_esa,longitude=lon_idx_esa).values
             td2m_k_esa=ds_main_esa["d2m"].isel(latitude=lat_idx_esa,longitude=lon_idx_esa).values
             tcc_esa=ds_main_esa["tcc"].isel(latitude=lat_idx_esa,longitude=lon_idx_esa).values*100
-            msl_esa=ds_main_esa["msl"].isel(latitude=lat_idx_esa,longitude=lon_idx_esa).values/100
-            tp_cum_esa=ds_main_esa["tp"].isel(latitude=lat_idx_esa,longitude=lon_idx_esa).values
-            mucape_esa=ds_main_esa["mucape"].isel(latitude=lat_idx_esa,longitude=lon_idx_esa).values
-            
-            rh2m_esa=relative_humidity(t2m_k_esa,td2m_k_esa)
-            t2m_c_esa=kelvin_to_celsius(t2m_k_esa)
-            t2m_corr_esa,pmsl_corr_esa=altitude_correction(t2m_c_esa,rh2m_esa,z_model,info['elev'],msl_esa)
-            tp_rate_esa=np.diff(tp_cum_esa,prepend=tp_cum_esa[0])*1000
-            
-            esaorario_data=[]
+            msl_esa = ds_main_esa["msl"].isel(latitude=lat_idx_esa, longitude=lon_idx_esa).values / 100
+            tp_cum_esa = ds_main_esa["tp"].isel(latitude=lat_idx_esa, longitude=lon_idx_esa).values
+            mucape_esa = ds_main_esa["mucape"].isel(latitude=lat_idx_esa, longitude=lon_idx_esa).values
+
+            rh2m_esa = relative_humidity(t2m_k_esa, td2m_k_esa)
+            t2m_c_esa = kelvin_to_celsius(t2m_k_esa)
+            t2m_corr_esa, pmsl_corr_esa = altitude_correction(t2m_c_esa, rh2m_esa, z_model, info['elev'], msl_esa)
+            tp_rate_esa = np.diff(tp_cum_esa, prepend=tp_cum_esa[0]) * 1000
+
+            esaorario_data = []
             for i in range(len(t2m_corr_esa)):
-                dt_utc=ref_dt+timedelta(hours=144+i*6)
-                dt_local=utc_to_local(dt_utc)
-                weather=classify_weather(t2m_corr_esa[i],rh2m_esa[i],tcc_esa[i],tp_rate_esa[i],
-                                         5.0,mucape_esa[i],season_thresh,timestep_hours=6)
+                dt_utc = ref_dt + timedelta(hours=144 + i*6)
+                dt_local = utc_to_local(dt_utc)
+                weather = classify_weather(t2m_corr_esa[i], rh2m_esa[i], tcc_esa[i], tp_rate_esa[i],
+                                           5.0, mucape_esa[i], season_thresh, timestep_hours=6)
                 esaorario_data.append({
-                    "d":dt_local.strftime("%Y%m%d"),
-                    "h":dt_local.strftime("%H"),
-                    "t":round(float(t2m_corr_esa[i]),1),
-                    "r":round(float(rh2m_esa[i])),
-                    "p":round(float(tp_rate_esa[i]),1),
-                    "pr":round(float(pmsl_corr_esa[i])),
-                    "w":weather
+                    "d": dt_local.strftime("%Y%m%d"),
+                    "h": dt_local.strftime("%H"),
+                    "t": round(float(t2m_corr_esa[i]),1),
+                    "r": round(float(rh2m_esa[i])),
+                    "p": round(float(tp_rate_esa[i]),1),
+                    "pr": round(float(pmsl_corr_esa[i])),
+                    "w": weather
                 })
-            
-            daily_summaries_esa=calculate_daily_summaries(esaorario_data,tcc_esa,tp_rate_esa,mucape_esa,season_thresh,timestep_hours=6)
-            
-            # ---------------------- UNIONE ----------------------
-            trihourly_all=trihourly_data+esaorario_data
-            daily_all=daily_summaries_tri+daily_summaries_esa
-            
-            city_data={
-                "r":RUN,
-                "c":city,
-                "x":info['lat'],
-                "y":info['lon'],
-                "z":info['elev'],
-                "TRIORARIO":trihourly_data,
-                "ESAORARIO":esaorario_data,
-                "GIORNALIERO":daily_all
+
+            daily_summaries_esa = calculate_daily_summaries(esaorario_data, tcc_esa, tp_rate_esa,
+                                                            mucape_esa, season_thresh, timestep_hours=6)
+
+            # ---------------------- UNIONE DATI ----------------------
+            trihourly_all = trihourly_data + esaorario_data
+            daily_all = daily_summaries_tri + daily_summaries_esa
+
+            city_data = {
+                "r": RUN,
+                "c": city,
+                "x": info['lat'],
+                "y": info['lon'],
+                "z": info['elev'],
+                "TRIORARIO": trihourly_data,
+                "ESAORARIO": esaorario_data,
+                "GIORNALIERO": daily_all
             }
-            
-            with open(f"{outdir}/{city}.json",'w',encoding='utf-8') as f:
-                json.dump(city_data,f,separators=(',',':'),ensure_ascii=False)
-            
-            processed+=1
-            if processed%50==0: print(f"{processed}/{len(venues)} città")
-            
+
+            with open(f"{outdir}/{city}_ecmwf.json", 'w', encoding='utf-8') as f:
+                json.dump(city_data, f, separators=(',', ':'), ensure_ascii=False)
+
+            processed += 1
+            if processed % 50 == 0:
+                print(f"{processed}/{len(venues)} città elaborate")
+
         except Exception as e:
             print(f"{city}: {e}")
             continue
-    
-    ds_main_tri.close(); ds_wind_tri.close(); ds_main_esa.close(); ds_orog.close()
+
+    # ---------------------- CHIUSURA DATASET ----------------------
+    ds_main_tri.close()
+    ds_wind_tri.close()
+    ds_main_esa.close()
+    ds_orog.close()
+
     print(f"Completato {RUN}: {processed}/{len(venues)} città → {outdir}/")
     return outdir
 
-if __name__=="__main__":
+# ---------------------- MAIN ----------------------
+if __name__ == "__main__":
     process_ecmwf_data()
