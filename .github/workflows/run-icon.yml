@@ -49,13 +49,13 @@ jobs:
           # Determina data e run corretti
           # ===============================
           NOW_HOUR=$(date -u +%H%M)
-          if [ "$NOW_HOUR" -lt 0330 ]; then
+          if [ "$NOW_HOUR" -lt 03 ]; then
             DATE=$(date -u -d "yesterday" +%Y%m%d)
             RUN=12
           else
             DATE=$(date -u +%Y%m%d)
             HOUR=$(date -u +%H)
-            if [ "$HOUR" -lt 12 ]; then
+            if [ "$HOUR" -lt 14 ]; then
               RUN=00
             else
               RUN=12
