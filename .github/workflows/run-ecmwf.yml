@@ -46,19 +46,19 @@ jobs:
           # ===============================
           # Determina data e run corretti
           # ===============================
-          NOW_HOUR=$(date -u +%H%M)
-          if [ "$NOW_HOUR" -lt 0830 ]; then
+          NOW_HOUR=$(date -u +%H)
+
+          if [ "$NOW_HOUR" -lt 8 ]; then
             DATE=$(date -u -d "yesterday" +%Y%m%d)
             RUN=12
+          elif [ "$NOW_HOUR" -lt 20 ]; then
+            DATE=$(date -u +%Y%m%d)
+            RUN=00
           else
             DATE=$(date -u +%Y%m%d)
-            HOUR=$(date -u +%H)
-            if [ "$HOUR" -lt 12 ]; then
-              RUN=00
-            else
-              RUN=12
-            fi
+            RUN=12
           fi
+
 
           RUN_FOLDER="${DATE}${RUN}"
           LOCAL_DIR="./${RUN_FOLDER}"
