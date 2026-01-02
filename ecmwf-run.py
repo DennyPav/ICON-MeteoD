@@ -213,7 +213,7 @@ def calculate_daily_summaries(trihourly_data, clct_daily, tp_rate_daily, mucape_
 def process_ecmwf_data():
     run_date, run_hour = get_run_datetime_now_utc()
     RUN_DATE_TIME=f"{run_date}{run_hour}"
-    RUN=f"{RUN_DATE_TIME}_ecmwf"
+    RUN=f"{RUN_DATE_TIME}"
     
     print(f"Elaborazione ECMWF {RUN}")
     
