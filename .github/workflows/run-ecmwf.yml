@@ -2,8 +2,8 @@ name: ECMWF MeteoD
 
 on:
   schedule:
-    - cron: "30 8 * * *"
-    - cron: "30 20 * * *"
+    - cron: "15 8 * * *"
+    - cron: "15 20 * * *"
   workflow_dispatch:
 
 jobs:
