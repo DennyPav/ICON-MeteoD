@@ -2,8 +2,8 @@ name: ECMWF MeteoD
 
 on:
   schedule:
-    - cron: "30 6 * * *"
-    - cron: "30 18 * * *"
+    - cron: "30 7 * * *"
+    - cron: "30 19 * * *"
   workflow_dispatch:
 
 jobs:
@@ -48,10 +48,10 @@ jobs:
           # ===============================
           NOW_HOUR=$(date -u +%H)
 
-          if [ "$NOW_HOUR" -lt 6 ]; then
+          if [ "$NOW_HOUR" -lt 7 ]; then
             DATE=$(date -u -d "yesterday" +%Y%m%d)
             RUN=12
-          elif [ "$NOW_HOUR" -lt 18 ]; then
+          elif [ "$NOW_HOUR" -lt 19 ]; then
             DATE=$(date -u +%Y%m%d)
             RUN=00
           else
