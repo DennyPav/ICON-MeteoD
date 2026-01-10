@@ -8,7 +8,7 @@ from ecmwf.opendata import Client
 
 # ---------------------- CONFIGURAZIONE ----------------------
 WORKDIR = os.getcwd()
-VENUES_PATH = f"{WORKDIR}/comuni_italia.json"
+VENUES_PATH = f"{WORKDIR}/comuni_italia_all.json"
 
 # Lapse rates
 LAPSE_DRY = 0.0098
