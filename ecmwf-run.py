@@ -327,7 +327,7 @@ def process_ecmwf_data():
                 "GIORNALIERO": daily_all
             }
 
-            safe_city = city.replace("'", " ")
+            safe_city = city.replace("'", "_")
             with open(f"{outdir}/{safe_city}_ecmwf.json", "w", encoding="utf-8") as f:
                 json.dump(city_data, f, separators=(",", ":"), ensure_ascii=False)
 
