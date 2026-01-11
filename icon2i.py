@@ -549,7 +549,7 @@ def process_data():
                 "GIORNALIERO": daily_summaries
             }
             
-            safe_city = city.replace("'", "")
+            safe_city = city.replace("'", " ")
             city_json_path = f"{output_dir}/{safe_city}.json"
             with open(city_json_path, 'w', encoding='utf-8') as f: 
                 json.dump(city_data, f, separators=(',',':'), ensure_ascii=False)
