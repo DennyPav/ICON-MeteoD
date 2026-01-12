@@ -144,70 +144,126 @@ def altitude_correction(t2m, rh, z_model, z_station, pmsl):
     p_corr = pmsl*np.exp(-G*z_station/(RD*T_mean))
     return t_corr, p_corr
 
-# ---------------------- CLASSIFICAZIONE METEO ----------------------
-def classify_weather(t2m, rh2m, clct, tp_rate, wind_kmh, mucape, season_thresh, timestep_hours=3):
-    if mucape>400 and tp_rate>0.5*timestep_hours:
+# ---------------------- CLASSIFICAZIONE ----------------------
+def classify_weather(t2m, rh2m, clct, tp_amount, wind_kmh, mucape, season_thresh, timestep_hours=3):
+    
+    # Calcolo il rateo orario medio per questo step
+    tp_rate_hourly = tp_amount / timestep_hours
+    
+    # 1. Temporale
+    # Se instabilità alta e pioggia significativa (> 0.5 mm/h)
+    if mucape > 400 and tp_rate_hourly > 0.5:
         return "TEMPORALE"
-    drizzle_min, drizzle_max = 0.09, 0.3
-    if timestep_hours==3:
-        prec_debole_min, prec_moderata_min, prec_intensa_min=0.3,5.0,20.0
-    else:
-        prec_debole_min, prec_moderata_min, prec_intensa_min=0.3,10.0,30.0
-    prec_intensity=None
-    if tp_rate>=prec_intensa_min: prec_intensity="INTENSA"
-    elif tp_rate>=prec_moderata_min: prec_intensity="MODERATA"
-    elif tp_rate>=prec_debole_min: prec_intensity="DEBOLE"
-    if prec_intensity:
-        octas=clct/100.0*8
-        if octas<=2: cloud_state="SERENO"
-        elif octas<=4: cloud_state="POCO NUVOLOSO"
-        elif octas<=6: cloud_state="NUVOLOSO"
-        else: cloud_state="COPERTO"
-        wet_bulb=wet_bulb_celsius(t2m,rh2m)
-        prec_type="NEVE" if wet_bulb<0.1 else "PIOGGIA"
-        return f"{cloud_state} {prec_type} {prec_intensity}"
-    if drizzle_min<=tp_rate<=drizzle_max:
-        if rh2m>=season_thresh["fog_rh"] and wind_kmh<=season_thresh["fog_wind"]: return "NEBBIA"
-        if rh2m>=season_thresh["haze_rh"] and wind_kmh<=season_thresh["haze_wind"]: return "FOSCHIA"
-        return "COPERTO PIOGGERELLA"
-    if rh2m>=season_thresh["fog_rh"] and wind_kmh<=season_thresh["fog_wind"]: return "NEBBIA"
-    if rh2m>=season_thresh["haze_rh"] and wind_kmh<=season_thresh["haze_wind"]: return "FOSCHIA"
-    octas=clct/100.0*8
-    if octas<=2: return "SERENO"
-    elif octas<=4: return "POCO NUVOLOSO"
-    elif octas<=6: return "NUVOLOSO"
-    return "COPERTO"
+    
+    # Tipo precipitazione
+    wet_bulb = wet_bulb_celsius(t2m, rh2m)
+    is_snow = wet_bulb < 0.5
+    
+    prec_type_high = "NEVE" if is_snow else "PIOGGIA"
+    prec_type_low = "NEVISCHIO" if is_snow else "PIOGGERELLA"
+    
+    # Nubi
+    octas = clct / 100.0 * 8
+    if octas <= 2: cloud_state = "SERENO"
+    elif octas <= 4: cloud_state = "POCO NUVOLOSO"
+    elif octas <= 6: cloud_state = "NUVOLOSO"
+    else: cloud_state = "COPERTO"
 
-# ---------------------- CARICAMENTO COMUNI ----------------------
-def load_venues(file_path):
-    with open(file_path,'r',encoding='utf-8') as f:
-        data=json.load(f)
-    venues={c:{"lat":float(v[0]),"lon":float(v[1]),"elev":float(v[2])} for c,v in data.items()}
-    print(f"Caricate {len(venues)} città")
-    return venues
+    # Soglie Rateo Orario (mm/h)
+    th_min_hourly = 0.1   # Minimo per scrivere qualcosa
+    th_split_hourly = 0.3 # Limite Pioggerella vs Pioggia
+    
+    # Intensità (basate su mm/h)
+    s_mod_hourly = 2.0
+    s_int_hourly = 7.0
+
+    # 2. Precipitazione (Analisi basata su mm/h)
+    if tp_rate_hourly >= th_min_hourly:
+        
+        # Debole (Pioggerella/Nevischio) -> < 0.3 mm/h
+        if tp_rate_hourly < th_split_hourly:
+            # Nebbia prioritaria
+            if (t2m < 12 and rh2m >= season_thresh["fog_rh"] and wind_kmh <= season_thresh["fog_wind"]): return "NEBBIA"
+            if (t2m < 12 and rh2m >= season_thresh["haze_rh"] and wind_kmh <= season_thresh["haze_wind"]): return "FOSCHIA"
+            
+            if cloud_state == "SERENO": cloud_state = "POCO NUVOLOSO"
+            return f"{cloud_state} {prec_type_low}"
+            
+        # Significativa (Pioggia/Neve) -> >= 0.3 mm/h
+        else:
+            if tp_rate_hourly >= s_int_hourly: intent = "INTENSA"
+            elif tp_rate_hourly >= s_mod_hourly: intent = "MODERATA"
+            else: intent = "DEBOLE"
+            
+            if cloud_state == "SERENO": cloud_state = "POCO NUVOLOSO"
+            return f"{cloud_state} {prec_type_high} {intent}"
+
+    # 3. No Precipitazione
+    if (t2m < 12 and rh2m >= season_thresh["fog_rh"] and wind_kmh <= season_thresh["fog_wind"]): return "NEBBIA"
+    if (t2m < 12 and rh2m >= season_thresh["haze_rh"] and wind_kmh <= season_thresh["haze_wind"]): return "FOSCHIA"
+    
+    return cloud_state
 
 # ---------------------- RIEPILOGO GIORNALIERO ----------------------
-def calculate_daily_summaries(trihourly_data, clct_daily, tp_rate_daily, mucape_daily, season_thresh, timestep_hours):
-    daily_summaries=[]
-    days_data={}
-    for i,record in enumerate(trihourly_data):
-        day=record["d"]
-        if day not in days_data: days_data[day]=[]
-        days_data[day].append((i,record))
-    for day,day_records in days_data.items():
-        day_temps=np.array([record["t"] for _,record in day_records])
-        t_min=round(np.min(day_temps),1)
-        t_max=round(np.max(day_temps),1)
-        tp_total=sum([record["p"] for _,record in day_records])
-        t_mean=np.mean(day_temps)
-        r_mean=np.mean([record["r"] for _,record in day_records])
-        v_mean=np.mean([record.get("v",5.0) for _,record in day_records])
-        first_idx=day_records[0][0]
-        weather_day=classify_weather(t_mean,r_mean,clct_daily[first_idx],
-                                     tp_total,v_mean,mucape_daily[first_idx],
-                                     season_thresh,timestep_hours=timestep_hours)
-        daily_summaries.append({"d":day,"tmin":t_min,"tmax":t_max,"p":round(tp_total,1),"w":weather_day})
-    return daily_summaries
+def calculate_daily_summaries(records, clct_arr, tp_arr, mucape_arr, season_thresh, timestep_hours):
+    daily = []
+    days_map = {}
+    
+    for i, rec in enumerate(records):
+        days_map.setdefault(rec["d"], []).append((i, rec))
+        
+    for d, items in days_map.items():
+        idxs = [x[0] for x in items]
+        recs = [x[1] for x in items]
+        
+        # Statistiche
+        temps = [r["t"] for r in recs]
+        t_min, t_max = min(temps), max(temps)
+        tp_tot = sum([r["p"] for r in recs]) # Totale mm nel giorno
+        
+        # Conta Step Neve vs Pioggia
+        snow_steps = 0
+        rain_steps = 0
+        for r in recs:
+            # Conta solo se il rateo orario era significativo (>= 0.1 mm/h)
+            rate = r["p"] / timestep_hours
+            if rate >= 0.1: 
+                wb = wet_bulb_celsius(r["t"], r["r"])
+                if wb < 0.5: snow_steps += 1
+                else: rain_steps += 1
+        
+        is_snow_day = snow_steps > rain_steps
+        
+        # Nubi medie
+        clct_mean = np.mean(clct_arr[idxs])
+        octas = clct_mean / 100.0 * 8
+        if octas <= 2: c_state = "SERENO"
+        elif octas <= 4: c_state = "POCO NUVOLOSO"
+        elif octas <= 6: c_state = "NUVOLOSO"
+        else: c_state = "COPERTO"
+        
+        # SOGLIA GIORNALIERA: < 0.3 mm -> NIENTE ICONA PIOGGIA
+        daily_thresh = 0.3 
+        
+        weather_str = c_state
+        
+        if tp_tot >= daily_thresh:
+            ptype = "NEVE" if is_snow_day else "PIOGGIA"
+            
+            # Intensità basata sul totale cumulato
+            if tp_tot >= 30: pint = "INTENSA"
+            elif tp_tot >= 10: pint = "MODERATA"
+            else: pint = "DEBOLE"
+            
+            if c_state == "SERENO": c_state = "POCO NUVOLOSO"
+            weather_str = f"{c_state} {ptype} {pint}"
+            
+        daily.append({
+            "d": d, "tmin": round(t_min,1), "tmax": round(t_max,1), 
+            "p": round(tp_tot,1), "w": weather_str
+        })
+        
+    return daily
 
 # ---------------------- PROCESSAMENTO ----------------------
 def process_ecmwf_data():
