@@ -96,7 +96,7 @@ def classify_weather(t2m, rh2m, clct, clcl, clcm, clch, tp_rate, wind_kmh, lpi, 
     wet_bulb = wet_bulb_celsius(t2m, rh2m)
     is_snow = wet_bulb < 0.5 
     prec_high = "NEVE" if is_snow else "PIOGGIA"
-    prec_low = "NEVISCHIO" if is_snow else "PIOGGERELLA" # MODIFICA: NEVISCHIO
+    prec_low = "NEVISCHIO" if is_snow else "PIOGGERELLA"
     
     # --- Nubi ---
     octas = clct / 100.0 * 8
@@ -116,7 +116,6 @@ def classify_weather(t2m, rh2m, clct, clcl, clcm, clch, tp_rate, wind_kmh, lpi, 
     if tp_rate >= th_min:
         # Debole (0.1 - 0.3)
         if tp_rate < th_split:
-            # Nebbia prioritaria
             if (t2m < 12 and rh2m >= season_thresh["fog_rh"] and wind_kmh <= season_thresh["fog_wind"] and low >= 80): return "NEBBIA"
             if (t2m < 12 and rh2m >= season_thresh["haze_rh"] and wind_kmh <= season_thresh["haze_wind"] and low >= 50): return "FOSCHIA"
             
@@ -127,7 +126,7 @@ def classify_weather(t2m, rh2m, clct, clcl, clcm, clch, tp_rate, wind_kmh, lpi, 
         else:
             if timestep_hours == 1: s_mod, s_int = 2.0, 7.0
             elif timestep_hours == 3: s_mod, s_int = 5.0, 20.0
-            else: s_mod, s_int = 10.0, 30.0 # Fallback generico
+            else: s_mod, s_int = 10.0, 30.0
             
             if tp_rate >= s_int: intent = "INTENSA"
             elif tp_rate >= s_mod: intent = "MODERATA"
@@ -143,24 +142,16 @@ def classify_weather(t2m, rh2m, clct, clcl, clcm, clch, tp_rate, wind_kmh, lpi, 
     return c_state
 
 def classify_daily_weather(recs, clct_avg, clcl_avg, clcm_avg, clch_avg, tp_tot, season, thresh):
-    """
-    Logica specifica per il riepilogo giornaliero:
-    1. Conta ore Neve vs Pioggia per decidere il tipo principale.
-    2. Se la precipitazione totale è bassa (< 1mm) o fatta solo di pioggerella, NON la scrive.
-    """
-    
-    # 1. Conta ore Neve/Pioggia per il tipo dominante
     snow_hours = 0
     rain_hours = 0
     for r in recs:
         wb = wet_bulb_celsius(r["t"], r["r"])
-        if r["p"] >= 0.1: # Conta solo se piove almeno un minimo
+        if r["p"] >= 0.1:
             if wb < 0.5: snow_hours += 1
             else: rain_hours += 1
             
     is_snow_day = snow_hours > rain_hours
     
-    # 2. Determina NUVOLOSITÀ MEDIA
     octas = clct_avg / 100.0 * 8
     low = clcl_avg if np.isfinite(clcl_avg) else (clcm_avg if np.isfinite(clcm_avg) else 0)
     
@@ -170,28 +161,18 @@ def classify_daily_weather(recs, clct_avg, clcl_avg, clcm_avg, clch_avg, tp_tot,
     elif octas <= 6: c_state = "NUVOLOSO"
     else: c_state = "COPERTO"
     
-    # 3. Determina PRECIPITAZIONE GIORNALIERA
-    # Soglia minima giornaliera per mostrare icona precipitazione: 1.0 mm 
-    # (oppure se ha fatto pioggia 'vera' >= 0.3 in qualche ora)
-    
     has_significant_rain = any(r["p"] >= 0.3 for r in recs)
     daily_prec_thresh = 1.0 
     
     if tp_tot >= daily_prec_thresh or has_significant_rain:
         prec_type = "NEVE" if is_snow_day else "PIOGGIA"
-        
-        # Intensità giornaliera
         if tp_tot >= 30.0: intensity = "INTENSA"
         elif tp_tot >= 10.0: intensity = "MODERATA"
         else: intensity = "DEBOLE"
-        
         if c_state == "SERENO": c_state = "POCO NUVOLOSO"
         return f"{c_state} {prec_type} {intensity}"
         
-    else:
-        # Se piove poco (< 1mm) o solo pioggerella, NON METTERE NULLA nel riepilogo
-        # Ritorna solo lo stato del cielo
-        return c_state
+    return c_state
 
 # ------------------- DATA PROCESSING -------------------
 def extract(var, y, x, weighted=False):
@@ -200,7 +181,6 @@ def extract(var, y, x, weighted=False):
     sl = var[..., y, x]
     if var.ndim == 2 or not weighted: return sl
     
-    # Weighted
     ring1 = []
     NY, NX = var.shape[-2:]
     for di in [-1,0,1]:
@@ -253,7 +233,6 @@ def process_data():
         else: ly, lx, le = i['lat'], i['lon'], i['elev']
         
         try:
-            # Nearest land
             dist = (latg - ly)**2 + (long - lx)**2
             cy, cx = np.unravel_index(np.argmin(dist), dist.shape)
             for rad in [0.1, 0.2, 0.5]:
@@ -264,7 +243,6 @@ def process_data():
                     cy, cx = ys[idx], xs[idx]
                     break
             
-            # Extract
             t2 = extract(kelvin_to_celsius(D['T_2M']['t2m'].values), cy, cx)
             rh = np.clip(extract(D['RELHUM']['r'].values, cy, cx), 0, 100)
             u, v = extract(D['U_10M']['u10'].values, cy, cx), extract(D['V_10M']['v10'].values, cy, cx)
@@ -287,13 +265,11 @@ def process_data():
             
             H, T, G = [], [], []
             
-            # Hourly
             for k in range(len(tc)):
                 loc = utc_to_local(ref + timedelta(hours=k))
                 wtxt = classify_weather(tc[k], rh[k], ct[k], cl[k], cm[k], ch[k], tp[k], wk[k], lpi[k], cape[k], uh[k], seas, thr, 1)
                 H.append({"d": loc.strftime("%Y%m%d"), "h": loc.strftime("%H"), "t": round(float(tc[k]),1), "r": round(float(rh[k])), "p": round(float(tp[k]),1), "pr": round(float(pc[k])), "v": round(float(wk[k]),1), "vd": str(wdirs[k]), "vg": round(float(vm[k]),1), "w": wtxt})
                 
-            # 3-Hourly
             for b in range(0, (len(H)//3)*3, 3):
                 chk = H[b:b+3]
                 im = b+1 if b+1<len(ct) else b
@@ -301,22 +277,16 @@ def process_data():
                 w3 = classify_weather(np.mean([x["t"] for x in chk]), np.mean([x["r"] for x in chk]), ct[im], cl[im], cm[im], ch[im], psum, np.mean([x["v"] for x in chk]), lpi[im], cape[im], uh[im], seas, thr, 3)
                 T.append({"d": chk[0]["d"], "h": chk[0]["h"], "t": round(np.mean([x["t"] for x in chk]),1), "r": round(np.mean([x["r"] for x in chk])), "p": round(psum,1), "pr": round(np.mean([x["pr"] for x in chk])), "v": round(np.mean([x["v"] for x in chk]),1), "vd": Counter([x["vd"] for x in chk]).most_common(1)[0][0], "vg": round(max(x["vg"] for x in chk),1), "w": w3})
                 
-            # Daily
             days = {}
-            for k, r in enumerate(H): days.setdefault(r["d"], []).append(r)
+            for r in H: days.setdefault(r["d"], []).append(r)
             d_keys = sorted(days.keys())
-            if len(d_keys)>1: d_keys = d_keys[:-1] # Drop last incomplete
+            if len(d_keys)>1: d_keys = d_keys[:-1]
             
             for d in d_keys:
                 recs = days[d]
-                # Indici corrispondenti alle ore del giorno (approssimati dal primo record del giorno + len)
-                # Nota: qui servirebbe mappare l'indice originale array, per semplicità uso media su tutto array se array non ha buchi
-                # Per precisione, ricalcolo indici basandomi sull'ordine lineare:
                 idxs = [i for i, x in enumerate(H) if x["d"] == d]
-                
                 if not idxs: continue
                 
-                # Medie per classificazione
                 ct_a = np.mean(ct[idxs])
                 cl_a = np.mean(cl[idxs])
                 cm_a = np.mean(cm[idxs])
@@ -324,16 +294,11 @@ def process_data():
                 tp_tot = sum(r["p"] for r in recs)
                 
                 wdaily = classify_daily_weather(recs, ct_a, cl_a, cm_a, ch_a, tp_tot, seas, thr)
-                
-                G.append({
-                    "d": d,
-                    "tmin": round(min(r["t"] for r in recs),1),
-                    "tmax": round(max(r["t"] for r in recs),1),
-                    "p": round(tp_tot,1),
-                    "w": wdaily
-                })
-                
-            with open(f"{out}/{c.replace('\'', ' ')}.json", 'w') as f:
+                G.append({"d": d, "tmin": round(min(r["t"] for r in recs),1), "tmax": round(max(r["t"] for r in recs),1), "p": round(tp_tot,1), "w": wdaily})
+            
+            # CORREZIONE QUI
+            safe_c = c.replace("'", " ")
+            with open(f"{out}/{safe_c}.json", 'w') as f:
                 json.dump({"r": RUN, "c": c, "x": ly, "y": lx, "z": le, "ORARIO": H, "TRIORARIO": T, "GIORNALIERO": G}, f, separators=(',', ':'), ensure_ascii=False)
                 
         except Exception as e: print(f"Err {c}: {e}")
