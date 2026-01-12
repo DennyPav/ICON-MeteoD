@@ -173,7 +173,7 @@ def classify_weather(t2m, rh2m, clct, tp_rate, wind_kmh, mucape, season_thresh, 
         elif octas<=6: cloud_state="NUVOLOSO"
         else: cloud_state="COPERTO"
         wet_bulb=wet_bulb_celsius(t2m,rh2m)
-        prec_type_low = "NEVISCHIO" if is_snow else "PIOGGERELLA"
+        prec_type_low = "NEVISCHIO" if wet_bulb<0.5 else "PIOGGERELLA"
         return f"{cloud_state} {prec_type_low}"
     if rh2m>=season_thresh["fog_rh"] and wind_kmh<=season_thresh["fog_wind"]: return "NEBBIA"
     if rh2m>=season_thresh["haze_rh"] and wind_kmh<=season_thresh["haze_wind"]: return "FOSCHIA"
