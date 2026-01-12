@@ -142,37 +142,60 @@ def classify_weather(t2m, rh2m, clct, clcl, clcm, clch, tp_rate, wind_kmh, lpi, 
     return c_state
 
 def classify_daily_weather(recs, clct_avg, clcl_avg, clcm_avg, clch_avg, tp_tot, season, thresh):
+    # Conta ore con neve/pioggia "significativa" (no pioggerella/nevischio)
     snow_hours = 0
     rain_hours = 0
+    has_significant_snow_or_rain = False
+
     for r in recs:
-        wb = wet_bulb_celsius(r["t"], r["r"])
-        if r["p"] >= 0.1:
-            if wb < 0.5: snow_hours += 1
-            else: rain_hours += 1
-            
+        wtxt = r.get("w", "")
+        # Considera solo stati con PIOGGIA/NEVE e ignora PIOGGERELLA/NEVISCHIO
+        if "PIOGGIA" in wtxt or "NEVE" in wtxt:
+            has_significant_snow_or_rain = True
+            wb = wet_bulb_celsius(r["t"], r["r"])
+            if wb < 0.5:
+                snow_hours += 1
+            else:
+                rain_hours += 1
+
     is_snow_day = snow_hours > rain_hours
-    
+
+    # Copertura nuvolosa media
     octas = clct_avg / 100.0 * 8
     low = clcl_avg if np.isfinite(clcl_avg) else (clcm_avg if np.isfinite(clcm_avg) else 0)
-    
-    if clch_avg > 60 and low < 30 and octas > 5: c_state = "NUBI ALTE"
-    elif octas <= 2: c_state = "SERENO"
-    elif octas <= 4: c_state = "POCO NUVOLOSO"
-    elif octas <= 6: c_state = "NUVOLOSO"
-    else: c_state = "COPERTO"
-    
-    has_significant_rain = any(r["p"] >= 0.3 for r in recs)
-    daily_prec_thresh = 1.0 
-    
-    if tp_tot >= daily_prec_thresh or has_significant_rain:
-        prec_type = "NEVE" if is_snow_day else "PIOGGIA"
-        if tp_tot >= 30.0: intensity = "INTENSA"
-        elif tp_tot >= 10.0: intensity = "MODERATA"
-        else: intensity = "DEBOLE"
-        if c_state == "SERENO": c_state = "POCO NUVOLOSO"
-        return f"{c_state} {prec_type} {intensity}"
-        
-    return c_state
+
+    if clch_avg > 60 and low < 30 and octas > 5:
+        c_state = "NUBI ALTE"
+    elif octas <= 2:
+        c_state = "SERENO"
+    elif octas <= 4:
+        c_state = "POCO NUVOLOSO"
+    elif octas <= 6:
+        c_state = "NUVOLOSO"
+    else:
+        c_state = "COPERTO"
+
+    # Se **non** c'è stata almeno un'ora con pioggia/neve significativa,
+    # NON aggiungere PIOGGIA/NEVE nel giornaliero
+    if not has_significant_snow_or_rain:
+        return c_state
+
+    # Se c'è stata pioggia/neve significativa, allora usa ancora la logica
+    # sull'intensità basata su tp_tot
+    prec_type = "NEVE" if is_snow_day else "PIOGGIA"
+
+    if tp_tot >= 30.0:
+        intensity = "INTENSA"
+    elif tp_tot >= 10.0:
+        intensity = "MODERATA"
+    else:
+        intensity = "DEBOLE"
+
+    if c_state == "SERENO":
+        c_state = "POCO NUVOLOSO"
+
+    return f"{c_state} {prec_type} {intensity}"
+
 
 # ------------------- DATA PROCESSING -------------------
 def extract(var, y, x, weighted=False):
