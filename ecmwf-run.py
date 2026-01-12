@@ -209,12 +209,18 @@ def calculate_daily_summaries(records, clct_arr, tp_arr, mucape_arr, season_thre
         
         snow_steps = 0
         rain_steps = 0
+        has_significant_snow_or_rain = False
+        
         for r in recs:
-            rate = r["p"] / timestep_hours
-            if rate >= 0.1: 
+            wtxt = r.get("w", "")
+            # Ignora pioggerella/nevischio: considera solo PIOGGIA/NEVE
+            if "PIOGGIA" in wtxt or "NEVE" in wtxt:
+                has_significant_snow_or_rain = True
                 wb = wet_bulb_celsius(r["t"], r["r"])
-                if wb < 0.5: snow_steps += 1
-                else: rain_steps += 1
+                if wb < 0.5:
+                    snow_steps += 1
+                else:
+                    rain_steps += 1
         
         is_snow_day = snow_steps > rain_steps
         
@@ -225,11 +231,10 @@ def calculate_daily_summaries(records, clct_arr, tp_arr, mucape_arr, season_thre
         elif octas <= 6: c_state = "NUVOLOSO"
         else: c_state = "COPERTO"
         
-        daily_thresh = 0.3 
-        
         weather_str = c_state
         
-        if tp_tot >= daily_thresh:
+        # Aggiungi PIOGGIA/NEVE solo se c'è stata almeno un passo con stato significativo
+        if has_significant_snow_or_rain:
             ptype = "NEVE" if is_snow_day else "PIOGGIA"
             if tp_tot >= 30: pint = "INTENSA"
             elif tp_tot >= 10: pint = "MODERATA"
@@ -244,6 +249,7 @@ def calculate_daily_summaries(records, clct_arr, tp_arr, mucape_arr, season_thre
         })
         
     return daily
+
 
 # ---------------------- PROCESSAMENTO ----------------------
 def process_ecmwf_data():
