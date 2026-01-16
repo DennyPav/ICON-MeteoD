@@ -165,16 +165,57 @@ def classify_weather(t2m, rh2m, clct, tp_rate, wind_kmh, mucape, season_thresh, 
         wet_bulb=wet_bulb_celsius(t2m,rh2m)
         prec_type="NEVE" if wet_bulb<0.5 else "PIOGGIA"
         return f"{cloud_state} {prec_type} {prec_intensity}"
-    if drizzle_min<=tp_rate<=drizzle_max:
-        if rh2m>=season_thresh["fog_rh"] and wind_kmh<=season_thresh["fog_wind"]: return "NEBBIA"
-        if rh2m>=season_thresh["haze_rh"] and wind_kmh<=season_thresh["haze_wind"]: return "FOSCHIA"
+    
+    # ---------------------- PRECIPITAZIONE BASSA ----------------------
+    if tp_rate > 0.9:
+        # PREC_HIGH → PIOGGIA / NEVE con intensità
         octas=clct/100.0*8
         if octas<=4: cloud_state="POCO NUVOLOSO"
         elif octas<=6: cloud_state="NUVOLOSO"
         else: cloud_state="COPERTO"
         wet_bulb=wet_bulb_celsius(t2m,rh2m)
-        prec_type_low = "NEVISCHIO" if wet_bulb<0.5 else "PIOGGERELLA"
+        prec_type="NEVE" if wet_bulb<0.5 else "PIOGGIA"
+        if tp_rate>=prec_intensa_min: prec_intensity="INTENSA"
+        elif tp_rate>=prec_moderata_min: prec_intensity="MODERATA"
+        else: prec_intensity="DEBOLE"
+        return f"{cloud_state} {prec_type} {prec_intensity}"
+
+    elif 0.5 <= tp_rate <= 0.9:
+        # PREC_LOW → PIOGGERELLA / NEVISCHIO senza dare priorità a NEBBIA/FOSCHIA
+        octas=clct/100.0*8
+        if octas<=4: cloud_state="POCO NUVOLOSO"
+        elif octas<=6: cloud_state="NUVOLOSO"
+        else: cloud_state="COPERTO"
+        wet_bulb=wet_bulb_celsius(t2m,rh2m)
+        prec_type_low="NEVISCHIO" if wet_bulb<0.5 else "PIOGGERELLA"
         return f"{cloud_state} {prec_type_low}"
+
+    elif 0.1 <= tp_rate < 0.5:
+        # Priorità NEBBIA/FOSCHIA
+        if rh2m>=season_thresh["fog_rh"] and wind_kmh<=season_thresh["fog_wind"]:
+            return "NEBBIA"
+        if rh2m>=season_thresh["haze_rh"] and wind_kmh<=season_thresh["haze_wind"]:
+            return "FOSCHIA"
+        octas=clct/100.0*8
+        if octas<=4: cloud_state="POCO NUVOLOSO"
+        elif octas<=6: cloud_state="NUVOLOSO"
+        else: cloud_state="COPERTO"
+        wet_bulb=wet_bulb_celsius(t2m,rh2m)
+        prec_type_low="NEVISCHIO" if wet_bulb<0.5 else "PIOGGERELLA"
+        return f"{cloud_state} {prec_type_low}"
+
+    else:  # tp_rate < 0.1
+        # Nessuna precipitazione → NEBBIA/FOSCHIA o stato cielo
+        if rh2m>=season_thresh["fog_rh"] and wind_kmh<=season_thresh["fog_wind"]:
+            return "NEBBIA"
+        if rh2m>=season_thresh["haze_rh"] and wind_kmh<=season_thresh["haze_wind"]:
+            return "FOSCHIA"
+        octas=clct/100.0*8
+        if octas<=2: return "SERENO"
+        elif octas<=4: return "POCO NUVOLOSO"
+        elif octas<=6: return "NUVOLOSO"
+        return "COPERTO"
+
     if rh2m>=season_thresh["fog_rh"] and wind_kmh<=season_thresh["fog_wind"]: return "NEBBIA"
     if rh2m>=season_thresh["haze_rh"] and wind_kmh<=season_thresh["haze_wind"]: return "FOSCHIA"
     octas=clct/100.0*8
