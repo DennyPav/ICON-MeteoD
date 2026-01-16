@@ -116,32 +116,31 @@ def classify_weather(t2m, rh2m, clct, clcl, clcm, clch,
 
     # PRECIPITAZIONE
     if tp_rate >= 0.1:
+
+        # Se lo stato del cielo è SERENO e c'è precipitazione → cambialo in POCO NUVOLOSO
+        if c_state == "SERENO":
+            c_state = "POCO NUVOLOSO"
+
+        # tp_rate > 0.3 → intensità
         if tp_rate > 0.3:
             if timestep_hours == 1: s_mod, s_int = 2.0, 7.0
             elif timestep_hours == 3: s_mod, s_int = 5.0, 20.0
             else: s_mod, s_int = 10.0, 30.0
-            intent = "INTENSA" if tp_rate>=s_int else ("MODERATA" if tp_rate>=s_mod else "DEBOLE")
-            if c_state=="SERENO": c_state="POCO NUVOLOSO"
+            intent = "INTENSA" if tp_rate >= s_int else ("MODERATA" if tp_rate >= s_mod else "DEBOLE")
             return f"{c_state} {prec_high} {intent}"
 
-        # Condizione rigida per ORARIO
-        elif timestep_hours == 1 and tp_rate == 0.3:
+        # tp_rate == 0.3 → solo prec_low
+        if tp_rate == 0.3:
             return f"{c_state} {prec_low}"
 
-        else:  # tp_rate 0.1 o 0.2 → nebbia/foschia o prec_low
-            if t2m<12 and rh2m>=season_thresh["fog_rh"] and wind_kmh<=season_thresh["fog_wind"] and low>=80:
-                return "NEBBIA"
-            if t2m<12 and rh2m>=season_thresh["haze_rh"] and wind_kmh<=season_thresh["haze_wind"] and low>=50:
-                return "FOSCHIA"
-            return f"{c_state} {prec_low}"
+        # tp_rate < 0.3 → prec_low o nebbia/foschia
+        if t2m < 12 and rh2m >= season_thresh["fog_rh"] and wind_kmh <= season_thresh["fog_wind"] and low >= 80:
+            return "NEBBIA"
+        if t2m < 12 and rh2m >= season_thresh["haze_rh"] and wind_kmh <= season_thresh["haze_wind"] and low >= 50:
+            return "FOSCHIA"
+        return f"{c_state} {prec_low}"
 
-    # Nessuna precipitazione → nebbia/foschia
-    if t2m<12 and rh2m>=season_thresh["fog_rh"] and wind_kmh<=season_thresh["fog_wind"] and low>=80:
-        return "NEBBIA"
-    if t2m<12 and rh2m>=season_thresh["haze_rh"] and wind_kmh<=season_thresh["haze_wind"] and low>=50:
-        return "FOSCHIA"
 
-    return c_state
 
 # ------------------- CLASSIFICATORE TRIORARIO -------------------
 def classify_triorario(H_chunk, season, season_thresh):
