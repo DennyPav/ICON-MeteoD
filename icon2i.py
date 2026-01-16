@@ -123,25 +123,37 @@ def classify_weather(t2m, rh2m, clct, clcl, clcm, clch,
 
         # tp_rate > 0.3 → intensità
         if tp_rate > 0.3:
-            if timestep_hours == 1: s_mod, s_int = 2.0, 7.0
-            elif timestep_hours == 3: s_mod, s_int = 5.0, 20.0
-            else: s_mod, s_int = 10.0, 30.0
+            if timestep_hours == 1:
+                s_mod, s_int = 2.0, 7.0
+            elif timestep_hours == 3:
+                s_mod, s_int = 5.0, 20.0
+            else:
+                s_mod, s_int = 10.0, 30.0
             intent = "INTENSA" if tp_rate >= s_int else ("MODERATA" if tp_rate >= s_mod else "DEBOLE")
             return f"{c_state} {prec_high} {intent}"
 
         # tp_rate == 0.3 → solo prec_low
-        if tp_rate == 0.3:
+        elif tp_rate == 0.3:
             return f"{c_state} {prec_low}"
 
         # tp_rate < 0.3 → prec_low o nebbia/foschia
-        if t2m < 12 and rh2m >= season_thresh["fog_rh"] and wind_kmh <= season_thresh["fog_wind"] and low >= 80:
+        else:
+            if t2m < 12 and rh2m >= season_thresh.get("fog_rh", 90) and wind_kmh <= season_thresh.get("fog_wind", 2) and low >= 80:
+                return "NEBBIA"
+            elif t2m < 12 and rh2m >= season_thresh.get("haze_rh", 80) and wind_kmh <= season_thresh.get("haze_wind", 5) and low >= 50:
+                return "FOSCHIA"
+            else:
+                return f"{c_state} {prec_low}"
+
+    # Se non c’è precipitazione significativa
+    else:
+        if t2m < 12 and rh2m >= season_thresh.get("fog_rh", 90) and wind_kmh <= season_thresh.get("fog_wind", 2) and low >= 80:
             return "NEBBIA"
-        if t2m < 12 and rh2m >= season_thresh["haze_rh"] and wind_kmh <= season_thresh["haze_wind"] and low >= 50:
+        elif t2m < 12 and rh2m >= season_thresh.get("haze_rh", 80) and wind_kmh <= season_thresh.get("haze_wind", 5) and low >= 50:
             return "FOSCHIA"
-        return f"{c_state} {prec_low}"
-    
-    # Default: solo cielo
-    return c_state
+        else:
+            return c_state
+
 
 
 
