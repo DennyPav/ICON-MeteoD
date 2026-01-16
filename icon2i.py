@@ -139,6 +139,9 @@ def classify_weather(t2m, rh2m, clct, clcl, clcm, clch,
         if t2m < 12 and rh2m >= season_thresh["haze_rh"] and wind_kmh <= season_thresh["haze_wind"] and low >= 50:
             return "FOSCHIA"
         return f"{c_state} {prec_low}"
+    
+    # Default: solo cielo
+    return c_state
 
 
 
@@ -323,7 +326,7 @@ def process_data():
             rh = np.clip(extract(D['RELHUM']['r'].values, cy, cx), 0, 100)
             u, v = extract(D['U_10M']['u10'].values, cy, cx), extract(D['V_10M']['v10'].values, cy, cx)
             vm = mps_to_kmh(extract(D['VMAX_10M']['fg10'].values, cy, cx))
-            pm = extract(D['PMSL']['pmsl'].values/100, cy, cx)
+            pm = extract(D['PMSL']['prmsl'].values/100, cy, cx)
             lpi = extract(D['LPI']['unknown'].values, cy, cx)
             cape = extract(np.maximum(D['CAPE_ML']['cape_ml'].values, D['CAPE_CON']['cape_con'].values), cy, cx)
             uh = extract(D['UH_MAX']['unknown'].values, cy, cx)
