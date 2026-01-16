@@ -7,6 +7,7 @@ import xarray as xr
 from datetime import datetime, timedelta, timezone
 from bs4 import BeautifulSoup
 from collections import Counter
+import math
 
 # ------------------- CONFIG -------------------
 WORKDIR = os.getcwd()
@@ -90,21 +91,27 @@ def classify_weather(t2m, rh2m, clct, clcl, clcm, clch,
                      tp_rate, wind_kmh, lpi, cape, uh,
                      season, season_thresh, timestep_hours=1):
 
+    # Calcolo wet-bulb
     wet_bulb = wet_bulb_celsius(t2m, rh2m)
     is_snow = wet_bulb < 0.5
     prec_high = "NEVE" if is_snow else "PIOGGIA"
-    prec_low = "NEVISCHIO" if is_snow else "PIOGGERELLA"
+    prec_low  = "NEVISCHIO" if is_snow else "PIOGGERELLA"
 
+    # Nuvolosità in octas
     octas = clct / 100.0 * 8
     low = clcl if np.isfinite(clcl) else (clcm if np.isfinite(clcm) else 0)
 
     # Stato cielo
     if clch > 60 and low < 30 and octas > 5:
         c_state = "NUBI ALTE"
-    elif octas <= 2: c_state = "SERENO"
-    elif octas <= 4: c_state = "POCO NUVOLOSO"
-    elif octas <= 6: c_state = "NUVOLOSO"
-    else: c_state = "COPERTO"
+    elif octas <= 2:
+        c_state = "SERENO"
+    elif octas <= 4:
+        c_state = "POCO NUVOLOSO"
+    elif octas <= 6:
+        c_state = "NUVOLOSO"
+    else:
+        c_state = "COPERTO"
 
     # TEMPORALE
     conv_signal = ((cape >= 400 and lpi >= 1.5) or (uh >= 50) or (cape >= 800))
@@ -113,8 +120,9 @@ def classify_weather(t2m, rh2m, clct, clcl, clcm, clch,
     deep_clouds = clct >= 90 and (clcm >= 40 or clch >= 40)
     if conv_signal and (rain_signal or gust_signal) and deep_clouds:
         return "TEMPORALE"
-
-    # PRECIPITAZIONE
+    
+    tp_rate = round(tp_rate, 1)
+    # PRECIPITAZIONE SIGNIFICATIVA
     if tp_rate >= 0.1:
 
         # Se lo stato del cielo è SERENO e c'è precipitazione → cambialo in POCO NUVOLOSO
@@ -132,12 +140,12 @@ def classify_weather(t2m, rh2m, clct, clcl, clcm, clch,
             intent = "INTENSA" if tp_rate >= s_int else ("MODERATA" if tp_rate >= s_mod else "DEBOLE")
             return f"{c_state} {prec_high} {intent}"
 
-        # tp_rate == 0.3 → solo prec_low
-        elif tp_rate == 0.3:
+        # tp_rate ≈ 0.3 → solo prec_low
+        elif math.isclose(tp_rate, 0.3, abs_tol=1e-3):
             return f"{c_state} {prec_low}"
 
         # tp_rate < 0.3 → prec_low o nebbia/foschia
-        else:
+        else:  # tp_rate < 0.3
             if t2m < 12 and rh2m >= season_thresh.get("fog_rh", 90) and wind_kmh <= season_thresh.get("fog_wind", 2) and low >= 80:
                 return "NEBBIA"
             elif t2m < 12 and rh2m >= season_thresh.get("haze_rh", 80) and wind_kmh <= season_thresh.get("haze_wind", 5) and low >= 50:
@@ -145,7 +153,7 @@ def classify_weather(t2m, rh2m, clct, clcl, clcm, clch,
             else:
                 return f"{c_state} {prec_low}"
 
-    # Se non c’è precipitazione significativa
+    # TP < 0.1 → non significativa, valuta nebbia/foschia o solo cielo
     else:
         if t2m < 12 and rh2m >= season_thresh.get("fog_rh", 90) and wind_kmh <= season_thresh.get("fog_wind", 2) and low >= 80:
             return "NEBBIA"
