@@ -21,10 +21,26 @@ LAPSE_P = 0.12
 
 # Soglie Nebbia
 SEASON_THRESHOLDS = {
-    "winter": {"start_day": 1, "end_day": 80, "fog_rh": 97, "haze_rh": 90, "fog_wind": 3, "haze_wind": 6},
-    "spring": {"start_day": 81, "end_day": 172, "fog_rh": 95, "haze_rh": 87, "fog_wind": 3.5, "haze_wind": 7},
-    "summer": {"start_day": 173, "end_day": 263, "fog_rh": 93, "haze_rh": 83, "fog_wind": 4, "haze_wind": 8},
-    "autumn": {"start_day": 264, "end_day": 365, "fog_rh": 96, "haze_rh": 88, "fog_wind": 3.2, "haze_wind": 6.5}
+    "winter": {
+        "start_day": 1, "end_day": 80, 
+        "fog_rh": 94, "haze_rh": 85, 
+        "fog_wind": 9.0, "haze_wind": 12.0
+    },
+    "spring": {
+        "start_day": 81, "end_day": 172, 
+        "fog_rh": 96, "haze_rh": 85, 
+        "fog_wind": 7.0, "haze_wind": 10.0
+    },
+    "summer": {
+        "start_day": 173, "end_day": 263, 
+        "fog_rh": 98, "haze_rh": 90, 
+        "fog_wind": 5.0, "haze_wind": 9.0
+    },
+    "autumn": {
+        "start_day": 264, "end_day": 365, 
+        "fog_rh": 95, "haze_rh": 88, 
+        "fog_wind": 8.0, "haze_wind": 11.0
+    }
 }
 
 CET = timezone(timedelta(hours=1))
@@ -124,13 +140,26 @@ def classify_weather_hourly(t2m, rh2m, clct, clcl, clcm, clch,
         elif math.isclose(tp_rate, 0.3, abs_tol=1e-3):
             return f"{c_state} {prec_low}"
         else:
-            if t2m < 12 and rh2m >= season_thresh.get("fog_rh", 90) and wind_kmh <= season_thresh.get("fog_wind", 2) and low >= 80: return "NEBBIA"
-            elif t2m < 12 and rh2m >= season_thresh.get("haze_rh", 80) and wind_kmh <= season_thresh.get("haze_wind", 5) and low >= 50: return "FOSCHIA"
+            # 0.1 <= tp < 0.3: Nebbia/Foschia/Nevischio
+            fog_rh = season_thresh.get("fog_rh", 95)
+            fog_wd = season_thresh.get("fog_wind", 8)
+            haze_rh = season_thresh.get("haze_rh", 85)
+            haze_wd = season_thresh.get("haze_wind", 12)
+
+            if t2m < 18 and rh2m >= fog_rh and wind_kmh <= fog_wd and low >= 80: return "NEBBIA"
+            elif t2m < 18 and rh2m >= haze_rh and wind_kmh <= haze_wd and low >= 50: return "FOSCHIA"
             else: return f"{c_state} {prec_low}"
     else:
-        if t2m < 12 and rh2m >= season_thresh.get("fog_rh", 90) and wind_kmh <= season_thresh.get("fog_wind", 2) and low >= 80: return "NEBBIA"
-        elif t2m < 12 and rh2m >= season_thresh.get("haze_rh", 80) and wind_kmh <= season_thresh.get("haze_wind", 5) and low >= 50: return "FOSCHIA"
+        # tp < 0.1
+        fog_rh = season_thresh.get("fog_rh", 95)
+        fog_wd = season_thresh.get("fog_wind", 8)
+        haze_rh = season_thresh.get("haze_rh", 85)
+        haze_wd = season_thresh.get("haze_wind", 12)
+
+        if t2m < 18 and rh2m >= fog_rh and wind_kmh <= fog_wd and low >= 80: return "NEBBIA"
+        elif t2m < 18 and rh2m >= haze_rh and wind_kmh <= haze_wd and low >= 50: return "FOSCHIA"
         else: return c_state
+
 
 # 2. Classificatore TRIORARIO AGGREGATO (Nuova Logica)
 def classify_weather_3h_aggregated(t_avg, rh_avg, clct_avg, tp_sum, wind_avg, hourly_descriptions_list, season_thresh):
@@ -186,10 +215,15 @@ def classify_weather_3h_aggregated(t_avg, rh_avg, clct_avg, tp_sum, wind_avg, ho
 
     # --- CASO 3: Precipitazione < 0.1 mm ---
     else:
-        # Fallback su parametri fisici medi per Nebbia/Foschia per sicurezza
-        if t_avg < 12:
-            if rh_avg >= season_thresh["fog_rh"] and wind_avg <= season_thresh["fog_wind"]: return "NEBBIA"
-            if rh_avg >= season_thresh["haze_rh"] and wind_avg <= season_thresh["haze_wind"]: return "FOSCHIA"
+        # Recupero soglie con default
+        fog_rh = season_thresh.get("fog_rh", 95)
+        fog_wd = season_thresh.get("fog_wind", 8)
+        haze_rh = season_thresh.get("haze_rh", 85)
+        haze_wd = season_thresh.get("haze_wind", 12)
+
+        if t_avg < 18:
+            if rh_avg >= fog_rh and wind_avg <= fog_wd: return "NEBBIA"
+            if rh_avg >= haze_rh and wind_avg <= haze_wd: return "FOSCHIA"
             
         return cloud_state
 
