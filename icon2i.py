@@ -389,6 +389,21 @@ def process_data():
                 chk = H[b:e]
                 w_list = [x["w"] for x in chk]
                 
+                # --- NUOVA LOGICA DIREZIONE VENTO ---
+                # 1. Contiamo le frequenze delle direzioni
+                dirs_counter = Counter([x["vd"] for x in chk])
+                most_common_dir, freq = dirs_counter.most_common(1)[0]
+                
+                # 2. Se la frequenza è 1 (significa che abbiamo 3 direzioni diverse, es: N, NW, W)
+                #    allora prendiamo la direzione dell'ora con il vento più forte ("v")
+                if freq == 1:
+                    max_wind_item = max(chk, key=lambda item: item["v"])
+                    selected_vd = max_wind_item["vd"]
+                else:
+                    # Altrimenti vince la maggioranza (2 su 3, o 3 su 3)
+                    selected_vd = most_common_dir
+                # ------------------------------------
+
                 # Classificazione 3H
                 w3 = classify_weather_3h_aggregated(t_avg, rh_avg, ct_avg, tp_sum, wk_avg, w_list, thr)
                 
@@ -400,10 +415,11 @@ def process_data():
                     "p": round(tp_sum, 1), 
                     "pr": round(pr_avg), 
                     "v": round(wk_avg, 1), 
-                    "vd": Counter([x["vd"] for x in chk]).most_common(1)[0][0], 
+                    "vd": selected_vd, # Qui usiamo la variabile calcolata sopra
                     "vg": round(max(x["vg"] for x in chk), 1), 
                     "w": w3
                 })
+
                 
             days = {}
             for r in H: days.setdefault(r["d"], []).append(r)
