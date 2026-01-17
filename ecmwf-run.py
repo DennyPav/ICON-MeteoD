@@ -17,10 +17,26 @@ LAPSE_P = 0.012
 
 # SOGLIE STAGIONALI
 SEASON_THRESHOLDS = {
-    "winter": {"start_day":1, "end_day":80, "fog_rh":97, "haze_rh":90, "fog_wind":5, "haze_wind":15},
-    "spring": {"start_day":81, "end_day":172, "fog_rh":95, "haze_rh":87, "fog_wind":7, "haze_wind":20},
-    "summer": {"start_day":173, "end_day":263, "fog_rh":93, "haze_rh":83, "fog_wind":10, "haze_wind":25},
-    "autumn": {"start_day":264, "end_day":365, "fog_rh":96, "haze_rh":88, "fog_wind":6, "haze_wind":18}
+    "winter": {
+        "start_day": 1, "end_day": 80, 
+        "fog_rh": 94, "haze_rh": 85, 
+        "fog_wind": 9.0, "haze_wind": 12.0
+    },
+    "spring": {
+        "start_day": 81, "end_day": 172, 
+        "fog_rh": 96, "haze_rh": 85, 
+        "fog_wind": 7.0, "haze_wind": 10.0
+    },
+    "summer": {
+        "start_day": 173, "end_day": 263, 
+        "fog_rh": 98, "haze_rh": 90, 
+        "fog_wind": 5.0, "haze_wind": 9.0
+    },
+    "autumn": {
+        "start_day": 264, "end_day": 365, 
+        "fog_rh": 95, "haze_rh": 88, 
+        "fog_wind": 8.0, "haze_wind": 11.0
+    }
 }
 
 CET = timezone(timedelta(hours=1))
@@ -146,83 +162,69 @@ def altitude_correction(t2m, rh, z_model, z_station, pmsl):
 
 # ---------------------- CLASSIFICAZIONE METEO ----------------------
 def classify_weather(t2m, rh2m, clct, tp_rate, wind_kmh, mucape, season_thresh, timestep_hours=3):
-    if mucape>400 and tp_rate>0.5*timestep_hours:
-        return "TEMPORALE"
-    drizzle_min, drizzle_max = 0.09, 0.3
-    if timestep_hours==3:
-        prec_debole_min, prec_moderata_min, prec_intensa_min=0.3,5.0,20.0
-    else:
-        prec_debole_min, prec_moderata_min, prec_intensa_min=0.3,10.0,30.0
-    prec_intensity=None
-    if tp_rate>=prec_intensa_min: prec_intensity="INTENSA"
-    elif tp_rate>=prec_moderata_min: prec_intensity="MODERATA"
-    elif tp_rate>=prec_debole_min: prec_intensity="DEBOLE"
-    if prec_intensity:
-        octas=clct/100.0*8
-        if octas<=4: cloud_state="POCO NUVOLOSO"
-        elif octas<=6: cloud_state="NUVOLOSO"
-        else: cloud_state="COPERTO"
-        wet_bulb=wet_bulb_celsius(t2m,rh2m)
-        prec_type="NEVE" if wet_bulb<0.5 else "PIOGGIA"
-        return f"{cloud_state} {prec_type} {prec_intensity}"
     
-    # ---------------------- PRECIPITAZIONE BASSA ----------------------
+    # Pre-calcoli comuni
+    wet_bulb = wet_bulb_celsius(t2m, rh2m)
+    prec_type_high = "NEVE" if wet_bulb < 0.5 else "PIOGGIA"
+    prec_type_low = "NEVISCHIO" if wet_bulb < 0.5 else "PIOGGERELLA"
+    
+    octas = clct / 100.0 * 8
+    if octas <= 2: cloud_state = "SERENO"
+    elif octas <= 4: cloud_state = "POCO NUVOLOSO"
+    elif octas <= 6: cloud_state = "NUVOLOSO"
+    else: cloud_state = "COPERTO"
+
+    # Soglie intensità basate su timestep
+    if timestep_hours == 3:
+        prec_debole_min, prec_moderata_min, prec_intensa_min = 0.3, 5.0, 20.0
+    else: # 6 hours
+        prec_debole_min, prec_moderata_min, prec_intensa_min = 0.3, 10.0, 30.0
+
+    # 1. TEMPORALE
+    if mucape > 400 and tp_rate > 0.5 * timestep_hours:
+        return "TEMPORALE"
+    
+    # 2. PRECIPITAZIONE ALTA (> 0.9 mm)
     if tp_rate > 0.9:
-        # PREC_HIGH → PIOGGIA / NEVE con intensità
-        octas=clct/100.0*8
-        if octas<=4: cloud_state="POCO NUVOLOSO"
-        elif octas<=6: cloud_state="NUVOLOSO"
-        else: cloud_state="COPERTO"
-        wet_bulb=wet_bulb_celsius(t2m,rh2m)
-        prec_type="NEVE" if wet_bulb<0.5 else "PIOGGIA"
-        if tp_rate>=prec_intensa_min: prec_intensity="INTENSA"
-        elif tp_rate>=prec_moderata_min: prec_intensity="MODERATA"
-        else: prec_intensity="DEBOLE"
-        return f"{cloud_state} {prec_type} {prec_intensity}"
+        if cloud_state == "SERENO": cloud_state = "POCO NUVOLOSO"
+        
+        if tp_rate >= prec_intensa_min: prec_intensity = "INTENSA"
+        elif tp_rate >= prec_moderata_min: prec_intensity = "MODERATA"
+        else: prec_intensity = "DEBOLE"
+        
+        return f"{cloud_state} {prec_type_high} {prec_intensity}"
 
+    # 3. PRECIPITAZIONE MEDIO-BASSA (0.5 - 0.9 mm) -> No Nebbia
     elif 0.5 <= tp_rate <= 0.9:
-        # PREC_LOW → PIOGGERELLA / NEVISCHIO senza dare priorità a NEBBIA/FOSCHIA
-        octas=clct/100.0*8
-        if octas<=4: cloud_state="POCO NUVOLOSO"
-        elif octas<=6: cloud_state="NUVOLOSO"
-        else: cloud_state="COPERTO"
-        wet_bulb=wet_bulb_celsius(t2m,rh2m)
-        prec_type_low="NEVISCHIO" if wet_bulb<0.5 else "PIOGGERELLA"
+        if cloud_state == "SERENO": cloud_state = "POCO NUVOLOSO"
         return f"{cloud_state} {prec_type_low}"
 
+    # 4. PRECIPITAZIONE BASSISSIMA (0.1 - 0.5 mm) -> Priorità Nebbia
     elif 0.1 <= tp_rate < 0.5:
-        # Priorità NEBBIA/FOSCHIA
-        if rh2m>=season_thresh["fog_rh"] and wind_kmh<=season_thresh["fog_wind"]:
-            return "NEBBIA"
-        if rh2m>=season_thresh["haze_rh"] and wind_kmh<=season_thresh["haze_wind"]:
-            return "FOSCHIA"
-        octas=clct/100.0*8
-        if octas<=4: cloud_state="POCO NUVOLOSO"
-        elif octas<=6: cloud_state="NUVOLOSO"
-        else: cloud_state="COPERTO"
-        wet_bulb=wet_bulb_celsius(t2m,rh2m)
-        prec_type_low="NEVISCHIO" if wet_bulb<0.5 else "PIOGGERELLA"
+        # Priorità NEBBIA/FOSCHIA (con T < 18°C)
+        fog_rh = season_thresh.get("fog_rh", 95)
+        fog_wd = season_thresh.get("fog_wind", 8)
+        haze_rh = season_thresh.get("haze_rh", 85)
+        haze_wd = season_thresh.get("haze_wind", 12)
+
+        if t2m < 18 and rh2m >= fog_rh and wind_kmh <= fog_wd: return "NEBBIA"
+        if t2m < 18 and rh2m >= haze_rh and wind_kmh <= haze_wd: return "FOSCHIA"
+        
+        # Se no nebbia -> Precipitazione debolissima
+        if cloud_state == "SERENO": cloud_state = "POCO NUVOLOSO"
         return f"{cloud_state} {prec_type_low}"
 
-    else:  # tp_rate < 0.1
-        # Nessuna precipitazione → NEBBIA/FOSCHIA o stato cielo
-        if rh2m>=season_thresh["fog_rh"] and wind_kmh<=season_thresh["fog_wind"]:
-            return "NEBBIA"
-        if rh2m>=season_thresh["haze_rh"] and wind_kmh<=season_thresh["haze_wind"]:
-            return "FOSCHIA"
-        octas=clct/100.0*8
-        if octas<=2: return "SERENO"
-        elif octas<=4: return "POCO NUVOLOSO"
-        elif octas<=6: return "NUVOLOSO"
-        return "COPERTO"
+    # 5. NESSUNA PRECIPITAZIONE (< 0.1 mm)
+    else:
+        fog_rh = season_thresh.get("fog_rh", 95)
+        fog_wd = season_thresh.get("fog_wind", 8)
+        haze_rh = season_thresh.get("haze_rh", 85)
+        haze_wd = season_thresh.get("haze_wind", 12)
 
-    if rh2m>=season_thresh["fog_rh"] and wind_kmh<=season_thresh["fog_wind"]: return "NEBBIA"
-    if rh2m>=season_thresh["haze_rh"] and wind_kmh<=season_thresh["haze_wind"]: return "FOSCHIA"
-    octas=clct/100.0*8
-    if octas<=2: return "SERENO"
-    elif octas<=4: return "POCO NUVOLOSO"
-    elif octas<=6: return "NUVOLOSO"
-    return "COPERTO"
+        if t2m < 18 and rh2m >= fog_rh and wind_kmh <= fog_wd: return "NEBBIA"
+        if t2m < 18 and rh2m >= haze_rh and wind_kmh <= haze_wd: return "FOSCHIA"
+        
+        return cloud_state
 
 # ---------------------- CARICAMENTO COMUNI ----------------------
 def load_venues(file_path):
@@ -380,6 +382,8 @@ def process_ecmwf_data():
             for i in range(len(t2m_corr_esa)):
                 dt_utc = ref_dt + timedelta(hours=144 + i*6)
                 dt_local = utc_to_local(dt_utc)
+                # NOTA: Per l'esaorario non scarichiamo il vento, passiamo 5.0 km/h fittizio.
+                # Questo rende la nebbia dipendente solo da RH e T.
                 weather = classify_weather(t2m_corr_esa[i], rh2m_esa[i], tcc_esa[i], tp_rate_esa[i],
                                            5.0, mucape_esa[i], season_thresh, timestep_hours=6)
                 esaorario_data.append({
