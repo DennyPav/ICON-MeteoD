@@ -86,147 +86,115 @@ def altitude_correction(t2m, rh, hs_model, hs_station, pmsl):
     wm = np.clip(rh / 100.0, 0.0, 1.0)
     return t2m + (LAPSE_DRY * (1.0 - wm) + LAPSE_MOIST * wm) * dz, pmsl + (dz / 100.0) * LAPSE_P * 100
 
-# ------------------- CLASSIFIER -------------------
-def classify_weather(t2m, rh2m, clct, clcl, clcm, clch,
-                     tp_rate, wind_kmh, lpi, cape, uh,
-                     season, season_thresh, timestep_hours=1):
+# ------------------- CLASSIFIERS -------------------
 
-    # Calcolo wet-bulb
+# 1. Classificatore ORARIO
+def classify_weather_hourly(t2m, rh2m, clct, clcl, clcm, clch,
+                     tp_rate, wind_kmh, lpi, cape, uh,
+                     season, season_thresh):
+    
     wet_bulb = wet_bulb_celsius(t2m, rh2m)
     is_snow = wet_bulb < 0.5
     prec_high = "NEVE" if is_snow else "PIOGGIA"
     prec_low  = "NEVISCHIO" if is_snow else "PIOGGERELLA"
-
-    # Nuvolosità in octas
+    
     octas = clct / 100.0 * 8
     low = clcl if np.isfinite(clcl) else (clcm if np.isfinite(clcm) else 0)
 
-    # Stato cielo
-    if clch > 60 and low < 30 and octas > 5:
-        c_state = "NUBI ALTE"
-    elif octas <= 2:
-        c_state = "SERENO"
-    elif octas <= 4:
-        c_state = "POCO NUVOLOSO"
-    elif octas <= 6:
-        c_state = "NUVOLOSO"
-    else:
-        c_state = "COPERTO"
+    if clch > 60 and low < 30 and octas > 5: c_state = "NUBI ALTE"
+    elif octas <= 2: c_state = "SERENO"
+    elif octas <= 4: c_state = "POCO NUVOLOSO"
+    elif octas <= 6: c_state = "NUVOLOSO"
+    else: c_state = "COPERTO"
 
-    # TEMPORALE
     conv_signal = ((cape >= 400 and lpi >= 1.5) or (uh >= 50) or (cape >= 800))
-    rain_signal = tp_rate >= (0.3 * timestep_hours)
+    rain_signal = tp_rate >= 0.3
     gust_signal = wind_kmh >= 35
     deep_clouds = clct >= 90 and (clcm >= 40 or clch >= 40)
+    
     if conv_signal and (rain_signal or gust_signal) and deep_clouds:
         return "TEMPORALE"
     
     tp_rate = round(tp_rate, 1)
-    # PRECIPITAZIONE SIGNIFICATIVA
     if tp_rate >= 0.1:
-
-        # Se lo stato del cielo è SERENO e c'è precipitazione → cambialo in POCO NUVOLOSO
-        if c_state == "SERENO":
-            c_state = "POCO NUVOLOSO"
-
-        # tp_rate > 0.3 → intensità
+        if c_state == "SERENO": c_state = "POCO NUVOLOSO"
         if tp_rate > 0.3:
-            if timestep_hours == 1:
-                s_mod, s_int = 2.0, 7.0
-            elif timestep_hours == 3:
-                s_mod, s_int = 5.0, 20.0
-            else:
-                s_mod, s_int = 10.0, 30.0
-            intent = "INTENSA" if tp_rate >= s_int else ("MODERATA" if tp_rate >= s_mod else "DEBOLE")
+            intent = "INTENSA" if tp_rate >= 7.0 else ("MODERATA" if tp_rate >= 2.0 else "DEBOLE")
             return f"{c_state} {prec_high} {intent}"
-
-        # tp_rate ≈ 0.3 → solo prec_low
         elif math.isclose(tp_rate, 0.3, abs_tol=1e-3):
             return f"{c_state} {prec_low}"
-
-        # tp_rate < 0.3 → prec_low o nebbia/foschia
-        else:  # tp_rate < 0.3
-            if t2m < 12 and rh2m >= season_thresh.get("fog_rh", 90) and wind_kmh <= season_thresh.get("fog_wind", 2) and low >= 80:
-                return "NEBBIA"
-            elif t2m < 12 and rh2m >= season_thresh.get("haze_rh", 80) and wind_kmh <= season_thresh.get("haze_wind", 5) and low >= 50:
-                return "FOSCHIA"
-            else:
-                return f"{c_state} {prec_low}"
-
-    # TP < 0.1 → non significativa, valuta nebbia/foschia o solo cielo
-    else:
-        if t2m < 12 and rh2m >= season_thresh.get("fog_rh", 90) and wind_kmh <= season_thresh.get("fog_wind", 2) and low >= 80:
-            return "NEBBIA"
-        elif t2m < 12 and rh2m >= season_thresh.get("haze_rh", 80) and wind_kmh <= season_thresh.get("haze_wind", 5) and low >= 50:
-            return "FOSCHIA"
         else:
-            return c_state
+            if t2m < 12 and rh2m >= season_thresh.get("fog_rh", 90) and wind_kmh <= season_thresh.get("fog_wind", 2) and low >= 80: return "NEBBIA"
+            elif t2m < 12 and rh2m >= season_thresh.get("haze_rh", 80) and wind_kmh <= season_thresh.get("haze_wind", 5) and low >= 50: return "FOSCHIA"
+            else: return f"{c_state} {prec_low}"
+    else:
+        if t2m < 12 and rh2m >= season_thresh.get("fog_rh", 90) and wind_kmh <= season_thresh.get("fog_wind", 2) and low >= 80: return "NEBBIA"
+        elif t2m < 12 and rh2m >= season_thresh.get("haze_rh", 80) and wind_kmh <= season_thresh.get("haze_wind", 5) and low >= 50: return "FOSCHIA"
+        else: return c_state
 
+# 2. Classificatore TRIORARIO AGGREGATO (Nuova Logica)
+def classify_weather_3h_aggregated(t_avg, rh_avg, clct_avg, tp_sum, wind_avg, hourly_descriptions_list, season_thresh):
+    
+    # Dati base
+    wet_bulb = wet_bulb_celsius(t_avg, rh_avg)
+    prec_type_high = "NEVE" if wet_bulb < 0.5 else "PIOGGIA"
+    prec_type_low = "NEVISCHIO" if wet_bulb < 0.5 else "PIOGGERELLA"
+    
+    # Stato cielo base
+    octas = clct_avg / 100.0 * 8
+    if octas <= 2: cloud_state = "SERENO"
+    elif octas <= 4: cloud_state = "POCO NUVOLOSO"
+    elif octas <= 6: cloud_state = "NUVOLOSO"
+    else: cloud_state = "COPERTO"
 
+    # --- CASO 1: Precipitazione > 0.9 mm ---
+    if tp_sum > 0.9:
+        if cloud_state == "SERENO": cloud_state = "POCO NUVOLOSO"
+        
+        # Soglie intensità 3 ore
+        if tp_sum >= 20.0: intensity = "INTENSA"
+        elif tp_sum >= 5.0: intensity = "MODERATA"
+        else: intensity = "DEBOLE"
+        
+        return f"{cloud_state} {prec_type_high} {intensity}"
 
-
-# ------------------- CLASSIFICATORE TRIORARIO -------------------
-def classify_triorario(H_chunk, season, season_thresh):
-    """
-    H_chunk: lista di 3 record orari {"t":..., "r":..., "p":..., "w":...}
-    """
-    has_prec_high = False
-    has_prec_low = False
-    has_fog = False
-    has_haze = False
-    p_sum = sum([x["p"] for x in H_chunk])
-    t_avg = np.mean([x["t"] for x in H_chunk])
-
-    # Analizza le ore
-    for h in H_chunk:
-        wtxt = h["w"]
-        if "PIOGGIA" in wtxt or "NEVE" in wtxt:
-            has_prec_high = True
-        elif "PIOGGERELLA" in wtxt or "NEVISCHIO" in wtxt:
-            has_prec_low = True
-        elif "NEBBIA" in wtxt:
-            has_fog = True
-        elif "FOSCHIA" in wtxt:
-            has_haze = True
-
-    # Stato cielo medio
-    octas = np.mean([h.get("clct",0) for h in H_chunk])/100*8
-    low = np.mean([h.get("clcl",0) for h in H_chunk])
-    if octas<=2: c_state="SERENO"
-    elif octas<=4: c_state="POCO NUVOLOSO"
-    elif octas<=6: c_state="NUVOLOSO"
-    else: c_state="COPERTO"
-
-    # LOGICA TRIORARIO AGGREGATA
-    if p_sum > 0.9:
-        return f"{c_state} {'NEVE' if t_avg<0.5 else 'PIOGGIA'} DEBOLE"
-    elif 0.1 <= p_sum <= 0.9:
-        if has_prec_high:
-            return f"{c_state} {'NEVE' if t_avg<0.5 else 'PIOGGIA'} DEBOLE"
-        elif has_prec_low:
-            return f"{c_state} {'NEVISCHIO' if t_avg<0.5 else 'PIOGGERELLA'}"
+    # --- CASO 2: Precipitazione 0.1 <= P <= 0.9 mm ---
+    elif 0.1 <= tp_sum <= 0.9:
+        
+        has_rain_snow = any(("PIOGGIA" in w or "NEVE" in w) for w in hourly_descriptions_list)
+        has_drizzle_sleet = any(("PIOGGERELLA" in w or "NEVISCHIO" in w) for w in hourly_descriptions_list)
+        has_fog = any("NEBBIA" in w for w in hourly_descriptions_list)
+        has_haze = any("FOSCHIA" in w for w in hourly_descriptions_list)
+        
+        if has_rain_snow:
+            if cloud_state == "SERENO": cloud_state = "POCO NUVOLOSO"
+            # Se la somma è bassa ma c'è pioggia, è debole
+            return f"{cloud_state} {prec_type_high} DEBOLE"
+            
+        elif has_drizzle_sleet:
+            if cloud_state == "SERENO": cloud_state = "POCO NUVOLOSO"
+            return f"{cloud_state} {prec_type_low}"
+            
         elif has_fog:
             return "NEBBIA"
+            
         elif has_haze:
             return "FOSCHIA"
+            
         else:
-            return c_state
+            return cloud_state
+
+    # --- CASO 3: Precipitazione < 0.1 mm ---
     else:
-        if has_fog: return "NEBBIA"
-        if has_haze: return "FOSCHIA"
-        return c_state
+        # Fallback su parametri fisici medi per Nebbia/Foschia per sicurezza
+        if t_avg < 12:
+            if rh_avg >= season_thresh["fog_rh"] and wind_avg <= season_thresh["fog_wind"]: return "NEBBIA"
+            if rh_avg >= season_thresh["haze_rh"] and wind_avg <= season_thresh["haze_wind"]: return "FOSCHIA"
+            
+        return cloud_state
 
-
+# 3. Classificatore GIORNALIERO
 def classify_daily_weather(recs, clct_avg, clcl_avg, clcm_avg, clch_avg, tp_tot, season, thresh):
-    """
-    Classificazione giornaliera del tempo.
-    
-    recs: lista di record orari {"t":..., "r":..., "p":..., "w":..., "h":...}
-    clct_avg, clcl_avg, clcm_avg, clch_avg: valori medi di nuvolosità
-    tp_tot: somma totale precipitazioni giornaliere
-    season, thresh: stagione e soglie per nebbia/foschia
-    """
-
     snow_hours = 0
     rain_hours = 0
     has_significant_snow_or_rain = False
@@ -236,70 +204,40 @@ def classify_daily_weather(recs, clct_avg, clcl_avg, clcm_avg, clch_avg, tp_tot,
     for r in recs:
         hour = int(r.get("h", 0))
         wtxt = r.get("w", "")
-
-        # Conteggio precipitazioni significative
         if "PIOGGIA" in wtxt:
             has_significant_snow_or_rain = True
             rain_hours += 1
         elif "NEVE" in wtxt:
             has_significant_snow_or_rain = True
             snow_hours += 1
-
-        # Conteggio nebbia/foschia solo tra le 5 e le 22
         elif 5 <= hour <= 22:
-            if "NEBBIA" in wtxt:
-                fog_hours += 1
-            elif "FOSCHIA" in wtxt:
-                haze_hours += 1
+            if "NEBBIA" in wtxt: fog_hours += 1
+            elif "FOSCHIA" in wtxt: haze_hours += 1
 
-    # Determina prevalenza tra neve/pioggia
     is_snow_day = snow_hours > rain_hours
-
-    # Copertura nuvolosa media
     octas = clct_avg / 100.0 * 8
     low = clcl_avg if np.isfinite(clcl_avg) else (clcm_avg if np.isfinite(clcm_avg) else 0)
 
-    if clch_avg > 60 and low < 30 and octas > 5:
-        c_state = "NUBI ALTE"
-    elif octas <= 2:
-        c_state = "SERENO"
-    elif octas <= 4:
-        c_state = "POCO NUVOLOSO"
-    elif octas <= 6:
-        c_state = "NUVOLOSO"
-    else:
-        c_state = "COPERTO"
+    if clch_avg > 60 and low < 30 and octas > 5: c_state = "NUBI ALTE"
+    elif octas <= 2: c_state = "SERENO"
+    elif octas <= 4: c_state = "POCO NUVOLOSO"
+    elif octas <= 6: c_state = "NUVOLOSO"
+    else: c_state = "COPERTO"
 
-    # Caso senza precipitazione significativa
     if not has_significant_snow_or_rain:
         total_fog_haze = fog_hours + haze_hours
         if total_fog_haze >= 9:
-            # Restituisci il fenomeno più numeroso
-            if fog_hours >= haze_hours:
-                return "NEBBIA"
-            else:
-                return "FOSCHIA"
+            return "NEBBIA" if fog_hours >= haze_hours else "FOSCHIA"
         else:
             return c_state
 
-    # Caso con precipitazione significativa
     prec_type = "NEVE" if is_snow_day else "PIOGGIA"
-
-    # Intensità basata su somma giornaliera
-    if tp_tot >= 30.0:
-        intensity = "INTENSA"
-    elif tp_tot >= 10.0:
-        intensity = "MODERATA"
-    else:
-        intensity = "DEBOLE"
-
-    # Se cielo medio era SERENO, cambia in POCO NUVOLOSO
-    if c_state == "SERENO":
-        c_state = "POCO NUVOLOSO"
-
+    if tp_tot >= 30.0: intensity = "INTENSA"
+    elif tp_tot >= 10.0: intensity = "MODERATA"
+    else: intensity = "DEBOLE"
+    
+    if c_state == "SERENO": c_state = "POCO NUVOLOSO"
     return f"{c_state} {prec_type} {intensity}"
-
-
 
 
 # ------------------- DATA PROCESSING -------------------
@@ -393,16 +331,56 @@ def process_data():
             
             H, T, G = [], [], []
             
+            # ORARIO
             for k in range(len(tc)):
                 loc = utc_to_local(ref + timedelta(hours=k))
-                wtxt = classify_weather(tc[k], rh[k], ct[k], cl[k], cm[k], ch[k], tp[k], wk[k], lpi[k], cape[k], uh[k], seas, thr, 1)
-                H.append({"d": loc.strftime("%Y%m%d"), "h": loc.strftime("%H"), "t": round(float(tc[k]),1), "r": round(float(rh[k])), "p": round(float(tp[k]),1), "pr": round(float(pc[k])), "v": round(float(wk[k]),1), "vd": str(wdirs[k]), "vg": round(float(vm[k]),1), "w": wtxt})
+                wtxt = classify_weather_hourly(tc[k], rh[k], ct[k], cl[k], cm[k], ch[k], tp[k], wk[k], lpi[k], cape[k], uh[k], seas, thr)
+                H.append({
+                    "d": loc.strftime("%Y%m%d"), 
+                    "h": loc.strftime("%H"), 
+                    "t": round(float(tc[k]),1), 
+                    "r": round(float(rh[k])), 
+                    "p": round(float(tp[k]),1), 
+                    "pr": round(float(pc[k])), 
+                    "v": round(float(wk[k]),1), 
+                    "vd": str(wdirs[k]), 
+                    "vg": round(float(vm[k]),1), 
+                    "w": wtxt
+                })
                 
-            for b in range(0, (len(H)//3)*3, 3):
-                chk = H[b:b+3]
-                psum = sum(x["p"] for x in chk)
-                w3 = classify_triorario(chk, seas, thr)
-                T.append({"d": chk[0]["d"], "h": chk[0]["h"], "t": round(np.mean([x["t"] for x in chk]),1), "r": round(np.mean([x["r"] for x in chk])), "p": round(psum,1), "pr": round(np.mean([x["pr"] for x in chk])), "v": round(np.mean([x["v"] for x in chk]),1), "vd": Counter([x["vd"] for x in chk]).most_common(1)[0][0], "vg": round(max(x["vg"] for x in chk),1), "w": w3})
+            # TRIORARIO (Nuova logica prioritaria + Fix Float)
+            num_blocks = len(tc) // 3
+            for i in range(num_blocks):
+                b = i * 3
+                e = b + 3
+                
+                # CAST A FLOAT PER JSON
+                t_avg = float(np.mean(tc[b:e]))
+                rh_avg = float(np.mean(rh[b:e]))
+                ct_avg = float(np.mean(ct[b:e]))
+                wk_avg = float(np.mean(wk[b:e]))
+                pr_avg = float(np.mean(pc[b:e]))
+                tp_sum = float(np.sum(tp[b:e]))
+                
+                # Lista descrizioni orarie per il controllo prioritario
+                chk = H[b:e]
+                w_list = [x["w"] for x in chk]
+                
+                # Classificazione 3H
+                w3 = classify_weather_3h_aggregated(t_avg, rh_avg, ct_avg, tp_sum, wk_avg, w_list, thr)
+                
+                T.append({
+                    "d": chk[0]["d"], 
+                    "h": chk[0]["h"], 
+                    "t": round(t_avg, 1), 
+                    "r": round(rh_avg), 
+                    "p": round(tp_sum, 1), 
+                    "pr": round(pr_avg), 
+                    "v": round(wk_avg, 1), 
+                    "vd": Counter([x["vd"] for x in chk]).most_common(1)[0][0], 
+                    "vg": round(max(x["vg"] for x in chk), 1), 
+                    "w": w3
+                })
                 
             days = {}
             for r in H: days.setdefault(r["d"], []).append(r)
@@ -421,9 +399,14 @@ def process_data():
                 tp_tot = sum(r["p"] for r in recs)
                 
                 wdaily = classify_daily_weather(recs, ct_a, cl_a, cm_a, ch_a, tp_tot, seas, thr)
-                G.append({"d": d, "tmin": round(min(r["t"] for r in recs),1), "tmax": round(max(r["t"] for r in recs),1), "p": round(tp_tot,1), "w": wdaily})
+                G.append({
+                    "d": d, 
+                    "tmin": round(min(r["t"] for r in recs),1), 
+                    "tmax": round(max(r["t"] for r in recs),1), 
+                    "p": round(tp_tot,1), 
+                    "w": wdaily
+                })
             
-            # CORREZIONE QUI
             safe_c = c.replace("'", " ")
             with open(f"{out}/{safe_c}.json", 'w') as f:
                 json.dump({"r": RUN, "c": c, "x": ly, "y": lx, "z": le, "ORARIO": H, "TRIORARIO": T, "GIORNALIERO": G}, f, separators=(',', ':'), ensure_ascii=False)
