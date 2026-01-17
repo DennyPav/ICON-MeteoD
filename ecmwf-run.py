@@ -19,27 +19,27 @@ LAPSE_P = 0.012
 SEASON_THRESHOLDS = {
     "winter": {
         "start_day": 1, "end_day": 80, 
-        "fog_rh": 94, "haze_rh": 85, 
-        "fog_wind": 9.0, "haze_wind": 12.0,
-        "fog_max_t": 16.0  # In inverno la nebbia è fredda
+        "fog_rh": 96, "haze_rh": 85, 
+        "fog_wind": 7.0, "haze_wind": 12.0,
+        "fog_max_t": 15.0
     },
     "spring": {
         "start_day": 81, "end_day": 172, 
-        "fog_rh": 96, "haze_rh": 85, 
-        "fog_wind": 7.0, "haze_wind": 10.0,
-        "fog_max_t": 22.0  # In primavera accettiamo nebbie più miti
+        "fog_rh": 97, "haze_rh": 85, 
+        "fog_wind": 6.0, "haze_wind": 10.0,
+        "fog_max_t": 20.0
     },
     "summer": {
         "start_day": 173, "end_day": 263, 
         "fog_rh": 98, "haze_rh": 90, 
-        "fog_wind": 5.0, "haze_wind": 9.0,
-        "fog_max_t": 26.0  # In estate accettiamo nebbie calde (fino a 26°C)
+        "fog_wind": 4.0, "haze_wind": 9.0,
+        "fog_max_t": 26.0
     },
     "autumn": {
         "start_day": 264, "end_day": 365, 
         "fog_rh": 95, "haze_rh": 88, 
-        "fog_wind": 8.0, "haze_wind": 11.0,
-        "fog_max_t": 20.0  # Autunno via di mezzo
+        "fog_wind": 7.0, "haze_wind": 11.0,
+        "fog_max_t": 20.0
     }
 }
 
