@@ -32,7 +32,8 @@ CEST = timezone(timedelta(hours=2))
 
 # ------------------- METEO CORE -------------------
 def utc_to_local(dt_utc):
-    now_utc = datetime.now(timezone.utc)
+    # now_utc = datetime.now(timezone.utc)
+    now_utc = datetime(2026, 1, 17, 22, 0, 0, tzinfo=timezone.utc)
     if 31 <= now_utc.month <= 10 or (now_utc.month == 3 and now_utc.day >= 25) or (now_utc.month == 10 and now_utc.day <= 25):
         return dt_utc.astimezone(CEST)
     return dt_utc.astimezone(CET)
