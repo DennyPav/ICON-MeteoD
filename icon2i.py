@@ -219,10 +219,14 @@ def classify_triorario(H_chunk, season, season_thresh):
 
 def classify_daily_weather(recs, clct_avg, clcl_avg, clcm_avg, clch_avg, tp_tot, season, thresh):
     """
+    Classificazione giornaliera del tempo.
+    
     recs: lista di record orari {"t":..., "r":..., "p":..., "w":..., "h":...}
-    Conta NEBBIA/FOSCHIA solo tra le ore 05 e 22.
-    Non verifica il wet-bulb per contare neve/pioggia.
+    clct_avg, clcl_avg, clcm_avg, clch_avg: valori medi di nuvolosità
+    tp_tot: somma totale precipitazioni giornaliere
+    season, thresh: stagione e soglie per nebbia/foschia
     """
+
     snow_hours = 0
     rain_hours = 0
     has_significant_snow_or_rain = False
@@ -232,7 +236,7 @@ def classify_daily_weather(recs, clct_avg, clcl_avg, clcm_avg, clch_avg, tp_tot,
     for r in recs:
         hour = int(r.get("h", 0))
         wtxt = r.get("w", "")
-        
+
         # Conteggio precipitazioni significative
         if "PIOGGIA" in wtxt:
             has_significant_snow_or_rain = True
@@ -240,7 +244,7 @@ def classify_daily_weather(recs, clct_avg, clcl_avg, clcm_avg, clch_avg, tp_tot,
         elif "NEVE" in wtxt:
             has_significant_snow_or_rain = True
             snow_hours += 1
-        
+
         # Conteggio nebbia/foschia solo tra le 5 e le 22
         elif 5 <= hour <= 22:
             if "NEBBIA" in wtxt:
@@ -268,16 +272,20 @@ def classify_daily_weather(recs, clct_avg, clcl_avg, clcm_avg, clch_avg, tp_tot,
 
     # Caso senza precipitazione significativa
     if not has_significant_snow_or_rain:
-        if fog_hours >= 6:
-            return "NEBBIA"
-        elif haze_hours >= 6:
-            return "FOSCHIA"
+        total_fog_haze = fog_hours + haze_hours
+        if total_fog_haze >= 9:
+            # Restituisci il fenomeno più numeroso
+            if fog_hours >= haze_hours:
+                return "NEBBIA"
+            else:
+                return "FOSCHIA"
         else:
             return c_state
 
     # Caso con precipitazione significativa
     prec_type = "NEVE" if is_snow_day else "PIOGGIA"
 
+    # Intensità basata su somma giornaliera
     if tp_tot >= 30.0:
         intensity = "INTENSA"
     elif tp_tot >= 10.0:
@@ -285,6 +293,7 @@ def classify_daily_weather(recs, clct_avg, clcl_avg, clcm_avg, clch_avg, tp_tot,
     else:
         intensity = "DEBOLE"
 
+    # Se cielo medio era SERENO, cambia in POCO NUVOLOSO
     if c_state == "SERENO":
         c_state = "POCO NUVOLOSO"
 
