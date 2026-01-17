@@ -218,22 +218,37 @@ def classify_triorario(H_chunk, season, season_thresh):
 
 
 def classify_daily_weather(recs, clct_avg, clcl_avg, clcm_avg, clch_avg, tp_tot, season, thresh):
-    # Conta ore con neve/pioggia "significativa" (no pioggerella/nevischio)
+    """
+    recs: lista di record orari {"t":..., "r":..., "p":..., "w":..., "h":...}
+    Conta NEBBIA/FOSCHIA solo tra le ore 05 e 22.
+    Non verifica il wet-bulb per contare neve/pioggia.
+    """
     snow_hours = 0
     rain_hours = 0
     has_significant_snow_or_rain = False
+    fog_hours = 0
+    haze_hours = 0
 
     for r in recs:
+        hour = int(r.get("h", 0))
         wtxt = r.get("w", "")
-        # Considera solo stati con PIOGGIA/NEVE e ignora PIOGGERELLA/NEVISCHIO
-        if "PIOGGIA" in wtxt or "NEVE" in wtxt:
+        
+        # Conteggio precipitazioni significative
+        if "PIOGGIA" in wtxt:
             has_significant_snow_or_rain = True
-            wb = wet_bulb_celsius(r["t"], r["r"])
-            if wb < 0.5:
-                snow_hours += 1
-            else:
-                rain_hours += 1
+            rain_hours += 1
+        elif "NEVE" in wtxt:
+            has_significant_snow_or_rain = True
+            snow_hours += 1
+        
+        # Conteggio nebbia/foschia solo tra le 5 e le 22
+        elif 5 <= hour <= 22:
+            if "NEBBIA" in wtxt:
+                fog_hours += 1
+            elif "FOSCHIA" in wtxt:
+                haze_hours += 1
 
+    # Determina prevalenza tra neve/pioggia
     is_snow_day = snow_hours > rain_hours
 
     # Copertura nuvolosa media
@@ -251,13 +266,16 @@ def classify_daily_weather(recs, clct_avg, clcl_avg, clcm_avg, clch_avg, tp_tot,
     else:
         c_state = "COPERTO"
 
-    # Se **non** c'è stata almeno un'ora con pioggia/neve significativa,
-    # NON aggiungere PIOGGIA/NEVE nel giornaliero
+    # Caso senza precipitazione significativa
     if not has_significant_snow_or_rain:
-        return c_state
+        if fog_hours >= 6:
+            return "NEBBIA"
+        elif haze_hours >= 6:
+            return "FOSCHIA"
+        else:
+            return c_state
 
-    # Se c'è stata pioggia/neve significativa, allora usa ancora la logica
-    # sull'intensità basata su tp_tot
+    # Caso con precipitazione significativa
     prec_type = "NEVE" if is_snow_day else "PIOGGIA"
 
     if tp_tot >= 30.0:
@@ -271,6 +289,8 @@ def classify_daily_weather(recs, clct_avg, clcl_avg, clcm_avg, clch_avg, tp_tot,
         c_state = "POCO NUVOLOSO"
 
     return f"{c_state} {prec_type} {intensity}"
+
+
 
 
 # ------------------- DATA PROCESSING -------------------
