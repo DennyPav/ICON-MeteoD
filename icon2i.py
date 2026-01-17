@@ -19,27 +19,31 @@ LAPSE_DRY = 0.0098
 LAPSE_MOIST = 0.006
 LAPSE_P = 0.12
 
-# Soglie Nebbia
+# SOGLIE NEBBIA OTTIMIZZATE (con fog_max_t dinamico)
 SEASON_THRESHOLDS = {
     "winter": {
         "start_day": 1, "end_day": 80, 
-        "fog_rh": 94, "haze_rh": 85, 
-        "fog_wind": 9.0, "haze_wind": 12.0
+        "fog_rh": 96, "haze_rh": 85, 
+        "fog_wind": 7.0, "haze_wind": 12.0,
+        "fog_max_t": 15.0
     },
     "spring": {
         "start_day": 81, "end_day": 172, 
-        "fog_rh": 96, "haze_rh": 85, 
-        "fog_wind": 7.0, "haze_wind": 10.0
+        "fog_rh": 97, "haze_rh": 85, 
+        "fog_wind": 6.0, "haze_wind": 10.0,
+        "fog_max_t": 20.0
     },
     "summer": {
         "start_day": 173, "end_day": 263, 
         "fog_rh": 98, "haze_rh": 90, 
-        "fog_wind": 5.0, "haze_wind": 9.0
+        "fog_wind": 4.0, "haze_wind": 9.0,
+        "fog_max_t": 26.0
     },
     "autumn": {
         "start_day": 264, "end_day": 365, 
         "fog_rh": 95, "haze_rh": 88, 
-        "fog_wind": 8.0, "haze_wind": 11.0
+        "fog_wind": 7.0, "haze_wind": 11.0,
+        "fog_max_t": 20.0
     }
 }
 
@@ -132,6 +136,14 @@ def classify_weather_hourly(t2m, rh2m, clct, clcl, clcm, clch,
         return "TEMPORALE"
     
     tp_rate = round(tp_rate, 1)
+    
+    # Recupero soglie
+    fog_rh = season_thresh.get("fog_rh", 95)
+    fog_wd = season_thresh.get("fog_wind", 8)
+    fog_t  = season_thresh.get("fog_max_t", 18) # default dinamico
+    haze_rh = season_thresh.get("haze_rh", 85)
+    haze_wd = season_thresh.get("haze_wind", 12)
+
     if tp_rate >= 0.1:
         if c_state == "SERENO": c_state = "POCO NUVOLOSO"
         if tp_rate > 0.3:
@@ -141,55 +153,40 @@ def classify_weather_hourly(t2m, rh2m, clct, clcl, clcm, clch,
             return f"{c_state} {prec_low}"
         else:
             # 0.1 <= tp < 0.3: Nebbia/Foschia/Nevischio
-            fog_rh = season_thresh.get("fog_rh", 95)
-            fog_wd = season_thresh.get("fog_wind", 8)
-            haze_rh = season_thresh.get("haze_rh", 85)
-            haze_wd = season_thresh.get("haze_wind", 12)
-
-            if t2m < 18 and rh2m >= fog_rh and wind_kmh <= fog_wd and low >= 80: return "NEBBIA"
-            elif t2m < 18 and rh2m >= haze_rh and wind_kmh <= haze_wd and low >= 50: return "FOSCHIA"
+            # Controllo T < soglia dinamica
+            if t2m < fog_t and rh2m >= fog_rh and wind_kmh <= fog_wd and low >= 80: return "NEBBIA"
+            elif t2m < fog_t and rh2m >= haze_rh and wind_kmh <= haze_wd and low >= 50: return "FOSCHIA"
             else: return f"{c_state} {prec_low}"
     else:
         # tp < 0.1
-        fog_rh = season_thresh.get("fog_rh", 95)
-        fog_wd = season_thresh.get("fog_wind", 8)
-        haze_rh = season_thresh.get("haze_rh", 85)
-        haze_wd = season_thresh.get("haze_wind", 12)
-
-        if t2m < 18 and rh2m >= fog_rh and wind_kmh <= fog_wd and low >= 80: return "NEBBIA"
-        elif t2m < 18 and rh2m >= haze_rh and wind_kmh <= haze_wd and low >= 50: return "FOSCHIA"
+        if t2m < fog_t and rh2m >= fog_rh and wind_kmh <= fog_wd and low >= 80: return "NEBBIA"
+        elif t2m < fog_t and rh2m >= haze_rh and wind_kmh <= haze_wd and low >= 50: return "FOSCHIA"
         else: return c_state
 
 
-# 2. Classificatore TRIORARIO AGGREGATO (Nuova Logica)
+# 2. Classificatore TRIORARIO AGGREGATO
 def classify_weather_3h_aggregated(t_avg, rh_avg, clct_avg, tp_sum, wind_avg, hourly_descriptions_list, season_thresh):
     
-    # Dati base
     wet_bulb = wet_bulb_celsius(t_avg, rh_avg)
     prec_type_high = "NEVE" if wet_bulb < 0.5 else "PIOGGIA"
     prec_type_low = "NEVISCHIO" if wet_bulb < 0.5 else "PIOGGERELLA"
     
-    # Stato cielo base
     octas = clct_avg / 100.0 * 8
     if octas <= 2: cloud_state = "SERENO"
     elif octas <= 4: cloud_state = "POCO NUVOLOSO"
     elif octas <= 6: cloud_state = "NUVOLOSO"
     else: cloud_state = "COPERTO"
 
-    # --- CASO 1: Precipitazione > 0.9 mm ---
+    # --- CASO 1: P > 0.9 mm ---
     if tp_sum > 0.9:
         if cloud_state == "SERENO": cloud_state = "POCO NUVOLOSO"
-        
-        # Soglie intensità 3 ore
         if tp_sum >= 20.0: intensity = "INTENSA"
         elif tp_sum >= 5.0: intensity = "MODERATA"
         else: intensity = "DEBOLE"
-        
         return f"{cloud_state} {prec_type_high} {intensity}"
 
-    # --- CASO 2: Precipitazione 0.1 <= P <= 0.9 mm ---
+    # --- CASO 2: 0.1 <= P <= 0.9 mm ---
     elif 0.1 <= tp_sum <= 0.9:
-        
         has_rain_snow = any(("PIOGGIA" in w or "NEVE" in w) for w in hourly_descriptions_list)
         has_drizzle_sleet = any(("PIOGGERELLA" in w or "NEVISCHIO" in w) for w in hourly_descriptions_list)
         has_fog = any("NEBBIA" in w for w in hourly_descriptions_list)
@@ -197,31 +194,23 @@ def classify_weather_3h_aggregated(t_avg, rh_avg, clct_avg, tp_sum, wind_avg, ho
         
         if has_rain_snow:
             if cloud_state == "SERENO": cloud_state = "POCO NUVOLOSO"
-            # Se la somma è bassa ma c'è pioggia, è debole
             return f"{cloud_state} {prec_type_high} DEBOLE"
-            
         elif has_drizzle_sleet:
             if cloud_state == "SERENO": cloud_state = "POCO NUVOLOSO"
             return f"{cloud_state} {prec_type_low}"
-            
-        elif has_fog:
-            return "NEBBIA"
-            
-        elif has_haze:
-            return "FOSCHIA"
-            
-        else:
-            return cloud_state
+        elif has_fog: return "NEBBIA"
+        elif has_haze: return "FOSCHIA"
+        else: return cloud_state
 
-    # --- CASO 3: Precipitazione < 0.1 mm ---
+    # --- CASO 3: P < 0.1 mm ---
     else:
-        # Recupero soglie con default
         fog_rh = season_thresh.get("fog_rh", 95)
         fog_wd = season_thresh.get("fog_wind", 8)
+        fog_t  = season_thresh.get("fog_max_t", 18)
         haze_rh = season_thresh.get("haze_rh", 85)
         haze_wd = season_thresh.get("haze_wind", 12)
 
-        if t_avg < 18:
+        if t_avg < fog_t:
             if rh_avg >= fog_rh and wind_avg <= fog_wd: return "NEBBIA"
             if rh_avg >= haze_rh and wind_avg <= haze_wd: return "FOSCHIA"
             
