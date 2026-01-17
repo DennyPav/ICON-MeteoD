@@ -20,22 +20,26 @@ SEASON_THRESHOLDS = {
     "winter": {
         "start_day": 1, "end_day": 80, 
         "fog_rh": 94, "haze_rh": 85, 
-        "fog_wind": 9.0, "haze_wind": 12.0
+        "fog_wind": 9.0, "haze_wind": 12.0,
+        "fog_max_t": 16.0  # In inverno la nebbia è fredda
     },
     "spring": {
         "start_day": 81, "end_day": 172, 
         "fog_rh": 96, "haze_rh": 85, 
-        "fog_wind": 7.0, "haze_wind": 10.0
+        "fog_wind": 7.0, "haze_wind": 10.0,
+        "fog_max_t": 22.0  # In primavera accettiamo nebbie più miti
     },
     "summer": {
         "start_day": 173, "end_day": 263, 
         "fog_rh": 98, "haze_rh": 90, 
-        "fog_wind": 5.0, "haze_wind": 9.0
+        "fog_wind": 5.0, "haze_wind": 9.0,
+        "fog_max_t": 26.0  # In estate accettiamo nebbie calde (fino a 26°C)
     },
     "autumn": {
         "start_day": 264, "end_day": 365, 
         "fog_rh": 95, "haze_rh": 88, 
-        "fog_wind": 8.0, "haze_wind": 11.0
+        "fog_wind": 8.0, "haze_wind": 11.0,
+        "fog_max_t": 20.0  # Autunno via di mezzo
     }
 }
 
@@ -199,32 +203,32 @@ def classify_weather(t2m, rh2m, clct, tp_rate, wind_kmh, mucape, season_thresh, 
         if cloud_state == "SERENO": cloud_state = "POCO NUVOLOSO"
         return f"{cloud_state} {prec_type_low}"
 
-    # 4. PRECIPITAZIONE BASSISSIMA (0.1 - 0.5 mm) -> Priorità Nebbia
-    elif 0.1 <= tp_rate < 0.5:
-        # Priorità NEBBIA/FOSCHIA (con T < 18°C)
-        fog_rh = season_thresh.get("fog_rh", 95)
-        fog_wd = season_thresh.get("fog_wind", 8)
-        haze_rh = season_thresh.get("haze_rh", 85)
-        haze_wd = season_thresh.get("haze_wind", 12)
+    # Recupero soglie dinamiche
+    fog_rh = season_thresh.get("fog_rh", 95)
+    fog_wd = season_thresh.get("fog_wind", 8)
+    fog_t  = season_thresh.get("fog_max_t", 18) # Default 18 se manca la chiave
+    
+    haze_rh = season_thresh.get("haze_rh", 85)
+    haze_wd = season_thresh.get("haze_wind", 12)
 
-        if t2m < 18 and rh2m >= fog_rh and wind_kmh <= fog_wd: return "NEBBIA"
-        if t2m < 18 and rh2m >= haze_rh and wind_kmh <= haze_wd: return "FOSCHIA"
+    # 4. PRECIPITAZIONE BASSISSIMA (0.1 - 0.5 mm) -> Priorità Nebbia
+    if 0.1 <= tp_rate < 0.5:
+        # Priorità NEBBIA/FOSCHIA (con T < soglia stagionale)
+        if t2m < fog_t and rh2m >= fog_rh and wind_kmh <= fog_wd: return "NEBBIA"
+        if t2m < fog_t and rh2m >= haze_rh and wind_kmh <= haze_wd: return "FOSCHIA"
         
         # Se no nebbia -> Precipitazione debolissima
         if cloud_state == "SERENO": cloud_state = "POCO NUVOLOSO"
         return f"{cloud_state} {prec_type_low}"
 
     # 5. NESSUNA PRECIPITAZIONE (< 0.1 mm)
-    else:
-        fog_rh = season_thresh.get("fog_rh", 95)
-        fog_wd = season_thresh.get("fog_wind", 8)
-        haze_rh = season_thresh.get("haze_rh", 85)
-        haze_wd = season_thresh.get("haze_wind", 12)
-
-        if t2m < 18 and rh2m >= fog_rh and wind_kmh <= fog_wd: return "NEBBIA"
-        if t2m < 18 and rh2m >= haze_rh and wind_kmh <= haze_wd: return "FOSCHIA"
+    elif tp_rate < 0.1: # else implicito
+        if t2m < fog_t and rh2m >= fog_rh and wind_kmh <= fog_wd: return "NEBBIA"
+        if t2m < fog_t and rh2m >= haze_rh and wind_kmh <= haze_wd: return "FOSCHIA"
         
         return cloud_state
+        
+    return cloud_state
 
 # ---------------------- CARICAMENTO COMUNI ----------------------
 def load_venues(file_path):
