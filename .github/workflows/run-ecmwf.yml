@@ -3,7 +3,7 @@ name: ECMWF MeteoD
 on:
   schedule:
     - cron: "30 7 * * *"
-    #- cron: "30 19 * * *"
+    - cron: "30 19 * * *"
   workflow_dispatch:
 
 jobs:
