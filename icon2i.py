@@ -140,7 +140,7 @@ def classify_weather_hourly(t2m, rh2m, clct, clcl, clcm, clch,
     # Recupero soglie
     fog_rh = season_thresh.get("fog_rh", 95)
     fog_wd = season_thresh.get("fog_wind", 8)
-    fog_t  = season_thresh.get("fog_max_t", 18) # default dinamico
+    fog_t  = season_thresh.get("fog_max_t", 18)
     haze_rh = season_thresh.get("haze_rh", 85)
     haze_wd = season_thresh.get("haze_wind", 12)
 
@@ -150,13 +150,16 @@ def classify_weather_hourly(t2m, rh2m, clct, clcl, clcm, clch,
             intent = "INTENSA" if tp_rate >= 7.0 else ("MODERATA" if tp_rate >= 2.0 else "DEBOLE")
             return f"{c_state} {prec_high} {intent}"
         elif math.isclose(tp_rate, 0.3, abs_tol=1e-3):
+            if c_state == "NUBI ALTE": c_state = "COPERTO"
             return f"{c_state} {prec_low}"
         else:
             # 0.1 <= tp < 0.3: Nebbia/Foschia/Nevischio
             # Controllo T < soglia dinamica
             if t2m < fog_t and rh2m >= fog_rh and wind_kmh <= fog_wd and low >= 80: return "NEBBIA"
             elif t2m < fog_t and rh2m >= haze_rh and wind_kmh <= haze_wd and low >= 50: return "FOSCHIA"
-            else: return f"{c_state} {prec_low}"
+            else: 
+                if c_state == "NUBI ALTE": c_state = "COPERTO"
+                return f"{c_state} {prec_low}"
     else:
         # tp < 0.1
         if t2m < fog_t and rh2m >= fog_rh and wind_kmh <= fog_wd and low >= 80: return "NEBBIA"
@@ -176,6 +179,10 @@ def classify_weather_3h_aggregated(t_avg, rh_avg, clct_avg, tp_sum, wind_avg, ho
     elif octas <= 4: cloud_state = "POCO NUVOLOSO"
     elif octas <= 6: cloud_state = "NUVOLOSO"
     else: cloud_state = "COPERTO"
+
+    nubi_alte_count = sum(1 for w in hourly_descriptions_list if "NUBI ALTE" in w)
+    if nubi_alte_count >= 2:
+        cloud_state = "NUBI ALTE"
 
     # --- CASO 1: P > 0.9 mm ---
     if tp_sum > 0.9:
