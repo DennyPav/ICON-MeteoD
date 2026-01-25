@@ -174,22 +174,39 @@ def classify_weather_3h_aggregated(t_avg, rh_avg, clct_avg, tp_sum, wind_avg, ho
     prec_type_high = "NEVE" if wet_bulb < 0.5 else "PIOGGIA"
     prec_type_low = "NEVISCHIO" if wet_bulb < 0.5 else "PIOGGERELLA"
     
+    # Cloud cover -> octa
     octas = clct_avg / 100.0 * 8
-    if octas <= 2: cloud_state = "SERENO"
-    elif octas <= 4: cloud_state = "POCO NUVOLOSO"
-    elif octas <= 6: cloud_state = "NUVOLOSO"
-    else: cloud_state = "COPERTO"
+    if octas <= 2:
+        cloud_state = "SERENO"
+    elif octas <= 4:
+        cloud_state = "POCO NUVOLOSO"
+    elif octas <= 6:
+        cloud_state = "NUVOLOSO"
+    else:
+        cloud_state = "COPERTO"
 
+    # Nubi alte da lista oraria
     nubi_alte_count = sum(1 for w in hourly_descriptions_list if "NUBI ALTE" in w)
     if nubi_alte_count >= 2:
         cloud_state = "NUBI ALTE"
 
+    def normalize_cloud_state_for_precip(cs: str) -> str:
+        # vale solo nei casi con precipitazione
+        return "COPERTO" if cs == "NUBI ALTE" else cs
+
     # --- CASO 1: P > 0.9 mm ---
     if tp_sum > 0.9:
-        if cloud_state == "SERENO": cloud_state = "POCO NUVOLOSO"
-        if tp_sum >= 20.0: intensity = "INTENSA"
-        elif tp_sum >= 5.0: intensity = "MODERATA"
-        else: intensity = "DEBOLE"
+        if cloud_state == "SERENO":
+            cloud_state = "POCO NUVOLOSO"
+        cloud_state = normalize_cloud_state_for_precip(cloud_state)
+
+        if tp_sum >= 20.0:
+            intensity = "INTENSA"
+        elif tp_sum >= 5.0:
+            intensity = "MODERATA"
+        else:
+            intensity = "DEBOLE"
+
         return f"{cloud_state} {prec_type_high} {intensity}"
 
     # --- CASO 2: 0.1 <= P <= 0.9 mm ---
@@ -200,14 +217,26 @@ def classify_weather_3h_aggregated(t_avg, rh_avg, clct_avg, tp_sum, wind_avg, ho
         has_haze = any("FOSCHIA" in w for w in hourly_descriptions_list)
         
         if has_rain_snow:
-            if cloud_state == "SERENO": cloud_state = "POCO NUVOLOSO"
+            if cloud_state == "SERENO":
+                cloud_state = "POCO NUVOLOSO"
+            cloud_state = normalize_cloud_state_for_precip(cloud_state)
             return f"{cloud_state} {prec_type_high} DEBOLE"
+
         elif has_drizzle_sleet:
-            if cloud_state == "SERENO": cloud_state = "POCO NUVOLOSO"
+            if cloud_state == "SERENO":
+                cloud_state = "POCO NUVOLOSO"
+            cloud_state = normalize_cloud_state_for_precip(cloud_state)
             return f"{cloud_state} {prec_type_low}"
-        elif has_fog: return "NEBBIA"
-        elif has_haze: return "FOSCHIA"
-        else: return cloud_state
+
+        elif has_fog:
+            return "NEBBIA"
+
+        elif has_haze:
+            return "FOSCHIA"
+
+        else:
+            # qui non c'è precipitazione (né nebbia/foschia) -> non tocchiamo NUBI ALTE
+            return cloud_state
 
     # --- CASO 3: P < 0.1 mm ---
     else:
@@ -218,9 +247,12 @@ def classify_weather_3h_aggregated(t_avg, rh_avg, clct_avg, tp_sum, wind_avg, ho
         haze_wd = season_thresh.get("haze_wind", 12)
 
         if t_avg < fog_t:
-            if rh_avg >= fog_rh and wind_avg <= fog_wd: return "NEBBIA"
-            if rh_avg >= haze_rh and wind_avg <= haze_wd: return "FOSCHIA"
-            
+            if rh_avg >= fog_rh and wind_avg <= fog_wd:
+                return "NEBBIA"
+            if rh_avg >= haze_rh and wind_avg <= haze_wd:
+                return "FOSCHIA"
+        
+        # ramo secco: nessuna normalizzazione, NUBI ALTE resta se presente
         return cloud_state
 
 # 3. Classificatore GIORNALIERO
