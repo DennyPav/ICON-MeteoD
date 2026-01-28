@@ -113,11 +113,7 @@ def classify_weather_hourly(t2m, rh2m, clct, clcl, clcm, clch,
                      tp_rate, wind_kmh, lpi, cape, uh,
                      season, season_thresh):
     
-    wet_bulb = wet_bulb_celsius(t2m, rh2m)
-    is_snow = wet_bulb < 0.5
-    prec_high = "NEVE" if is_snow else "PIOGGIA"
-    prec_low  = "NEVISCHIO" if is_snow else "PIOGGERELLA"
-    
+    # --- MODIFICA: Calcolo nuvolosità spostato IN CIMA ---
     octas = clct / 100.0 * 8
     low = clcl if np.isfinite(clcl) else (clcm if np.isfinite(clcm) else 0)
 
@@ -126,14 +122,22 @@ def classify_weather_hourly(t2m, rh2m, clct, clcl, clcm, clch,
     elif octas <= 4: c_state = "POCO NUVOLOSO"
     elif octas <= 6: c_state = "NUVOLOSO"
     else: c_state = "COPERTO"
+    # -----------------------------------------------------
 
+    wet_bulb = wet_bulb_celsius(t2m, rh2m)
+    is_snow = wet_bulb < 0.5
+    prec_high = "NEVE" if is_snow else "PIOGGIA"
+    prec_low  = "NEVISCHIO" if is_snow else "PIOGGERELLA"
+    
     conv_signal = ((cape >= 400 and lpi >= 1.5) or (uh >= 50) or (cape >= 800))
     rain_signal = tp_rate >= 0.3
     gust_signal = wind_kmh >= 35
     deep_clouds = clct >= 90 and (clcm >= 40 or clch >= 40)
     
+    # --- MODIFICA: Return con cloud_state ---
     if conv_signal and (rain_signal or gust_signal) and deep_clouds:
-        return "TEMPORALE"
+        if c_state == "SERENO": c_state = "POCO NUVOLOSO"
+        return f"{c_state} TEMPORALE"
     
     tp_rate = round(tp_rate, 1)
     
@@ -153,8 +157,7 @@ def classify_weather_hourly(t2m, rh2m, clct, clcl, clcm, clch,
             if c_state == "NUBI ALTE": c_state = "COPERTO"
             return f"{c_state} {prec_low}"
         else:
-            # 0.1 <= tp < 0.3: Nebbia/Foschia/Nevischio
-            # Controllo T < soglia dinamica
+            # 0.1 <= tp < 0.3
             if t2m < fog_t and rh2m >= fog_rh and wind_kmh <= fog_wd and low >= 80: return "NEBBIA"
             elif t2m < fog_t and rh2m >= haze_rh and wind_kmh <= haze_wd and low >= 50: return "FOSCHIA"
             else: 
@@ -165,6 +168,7 @@ def classify_weather_hourly(t2m, rh2m, clct, clcl, clcm, clch,
         if t2m < fog_t and rh2m >= fog_rh and wind_kmh <= fog_wd and low >= 80: return "NEBBIA"
         elif t2m < fog_t and rh2m >= haze_rh and wind_kmh <= haze_wd and low >= 50: return "FOSCHIA"
         else: return c_state
+
 
 
 # 2. Classificatore TRIORARIO AGGREGATO
@@ -193,6 +197,17 @@ def classify_weather_3h_aggregated(t_avg, rh_avg, clct_avg, tp_sum, wind_avg, ho
     def normalize_cloud_state_for_precip(cs: str) -> str:
         # vale solo nei casi con precipitazione
         return "COPERTO" if cs == "NUBI ALTE" else cs
+
+    # --- MODIFICA: Controllo TEMPORALE Prioritario ---
+    # Se anche solo un'ora nel blocco ha "TEMPORALE", l'intero blocco diventa TEMPORALE
+    if any("TEMPORALE" in w for w in hourly_descriptions_list):
+        if cloud_state == "SERENO": 
+            cloud_state = "POCO NUVOLOSO"
+        # Normalizziamo nubi alte in coperto se necessario, o lo lasciamo. 
+        # Di solito col temporale è coperto/nubi alte, ma forziamo la logica standard
+        cloud_state = normalize_cloud_state_for_precip(cloud_state) 
+        return f"{cloud_state} TEMPORALE"
+    # -------------------------------------------------
 
     # --- CASO 1: P > 0.9 mm ---
     if tp_sum > 0.9:
@@ -235,7 +250,6 @@ def classify_weather_3h_aggregated(t_avg, rh_avg, clct_avg, tp_sum, wind_avg, ho
             return "FOSCHIA"
 
         else:
-            # qui non c'è precipitazione (né nebbia/foschia) -> non tocchiamo NUBI ALTE
             return cloud_state
 
     # --- CASO 3: P < 0.1 mm ---
@@ -252,7 +266,6 @@ def classify_weather_3h_aggregated(t_avg, rh_avg, clct_avg, tp_sum, wind_avg, ho
             if rh_avg >= haze_rh and wind_avg <= haze_wd:
                 return "FOSCHIA"
         
-        # ramo secco: nessuna normalizzazione, NUBI ALTE resta se presente
         return cloud_state
 
 # 3. Classificatore GIORNALIERO
@@ -262,10 +275,16 @@ def classify_daily_weather(recs, clct_avg, clcl_avg, clcm_avg, clch_avg, tp_tot,
     has_significant_snow_or_rain = False
     fog_hours = 0
     haze_hours = 0
+    has_storm = False # --- MODIFICA: Flag temporale ---
 
     for r in recs:
         hour = int(r.get("h", 0))
         wtxt = r.get("w", "")
+        
+        # --- MODIFICA: Controllo stringa ---
+        if "TEMPORALE" in wtxt:
+            has_storm = True
+            
         if "PIOGGIA" in wtxt:
             has_significant_snow_or_rain = True
             rain_hours += 1
@@ -286,6 +305,11 @@ def classify_daily_weather(recs, clct_avg, clcl_avg, clcm_avg, clch_avg, tp_tot,
     elif octas <= 6: c_state = "NUVOLOSO"
     else: c_state = "COPERTO"
 
+    # --- MODIFICA: Priorità al TEMPORALE ---
+    if has_storm:
+        if c_state == "SERENO": c_state = "POCO NUVOLOSO"
+        return f"{c_state} TEMPORALE"
+
     if not has_significant_snow_or_rain:
         total_fog_haze = fog_hours + haze_hours
         if total_fog_haze >= 9:
@@ -300,6 +324,7 @@ def classify_daily_weather(recs, clct_avg, clcl_avg, clcm_avg, clch_avg, tp_tot,
     
     if c_state == "SERENO": c_state = "POCO NUVOLOSO"
     return f"{c_state} {prec_type} {intensity}"
+
 
 
 # ------------------- DATA PROCESSING -------------------
