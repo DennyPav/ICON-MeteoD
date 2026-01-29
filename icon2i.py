@@ -52,18 +52,24 @@ def get_r2_client():
         region_name='auto'
     )
 
-def upload_to_r2(local_file_path, run_date, comune_name):
+def upload_to_r2(local_file_path, run_date, run_hour, comune_name):
     """
-    Carica un file JSON su R2 con la stessa struttura di cartelle di Google Drive
-    Struttura: YYYYMMDD/comune.json
+    Carica un file JSON su R2.
+    Struttura: ICON-2I/YYYYMMDDRR/comune.json
+    Esempio: ICON-2I/2026012912/Roma.json
     """
     s3 = get_r2_client()
     if not s3:
         return False
     
     try:
-        # Percorso su R2: run_date/comune.json (es: 20260129/Roma.json)
-        object_key = f"{run_date}/{comune_name}.json"
+        # Costruiamo il percorso esatto richiesto
+        # run_date è YYYYMMDD (es: 20260129)
+        # run_hour è RR (es: 12)
+        folder_name = f"{run_date}{run_hour}" 
+        
+        # Percorso finale: ICON-2I/2026012912/Roma.json
+        object_key = f"ICON-2I/{folder_name}/{comune_name}.json"
         
         print(f"[R2] Uploading {object_key}...", flush=True)
         
@@ -73,16 +79,16 @@ def upload_to_r2(local_file_path, run_date, comune_name):
             object_key,
             ExtraArgs={
                 'ContentType': 'application/json',
-                'CacheControl': 'public, max-age=3600'  # Cache 1 ora
+                'CacheControl': 'public, max-age=3600'
             }
         )
-        
-        print(f"[R2] ✅ {object_key} caricato.", flush=True)
+        # print(f"[R2] ✅ {object_key} caricato.", flush=True) # Commentato per ridurre log se vuoi
         return True
         
     except Exception as e:
         print(f"[R2] ❌ Errore upload {comune_name}: {e}", flush=True)
         return False
+
 
 # ------------------- METEO CORE (Invariato) -------------------
 def utc_to_local(dt_utc):
@@ -388,8 +394,9 @@ def process_data():
     ref = datetime.strptime(RUN, "%Y%m%d%H").replace(tzinfo=timezone.utc)
     seas, thr = get_season_precise(ref)
     
-    # Estrazione solo data (YYYYMMDD) per struttura cartelle
-    run_date_str = RUN[:8]  # Es: "20260129"
+    # Estrazione data e run (YYYYMMDDRR) per struttura cartelle
+    run_date_str = RUN[:8]  # "20260129"
+    run_hour_str = RUN[8:]  # "12"
     
     for c, i in venues.items():
         if isinstance(i, list): ly, lx, le = i[0], i[1], i[2]
@@ -517,7 +524,7 @@ def process_data():
                 json.dump({"r": RUN, "c": c, "x": ly, "y": lx, "z": le, "ORARIO": H, "TRIORARIO": T, "GIORNALIERO": G}, f, separators=(',', ':'), ensure_ascii=False)
             
             # --- UPLOAD SU R2 ---
-            upload_to_r2(local_json_path, run_date_str, safe_c)
+            upload_to_r2(local_json_path, run_date_str, run_hour_str, safe_c)
                 
         except Exception as e: print(f"Err {c}: {e}")
 
