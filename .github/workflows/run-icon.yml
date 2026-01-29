@@ -89,6 +89,6 @@ jobs:
           rclone mkdir "$REMOTE_DIR" || true
           
           # Copio i file
-          rclone copy "$LOCAL_DIR" "$REMOTE_DIR" --drive-chunk-size 64M --ignore-existing --verbose
+          rclone copy "$LOCAL_DIR" "$REMOTE_DIR" --drive-chunk-size 64M --verbose
           
           echo "✅ Upload Google Drive completato"
