@@ -46,12 +46,14 @@ jobs:
       # 2. SETUP RCLONE (Eseguito solo se Python ha successo)
       # ---------------------------------------------------------
       - name: Install & Setup rclone
-        if: success()  # Esegui solo se lo step precedente è andato bene
+        if: success()
+        env:
+          RCLONE_CONFIG: ${{ secrets.RCLONE_CONFIG }}
         run: |
           curl https://rclone.org/install.sh | sudo bash
           mkdir -p /home/runner/.config/rclone
-          # Configura rclone usando il secret
-          echo "${{ secrets.RCLONE_CONFIG }}" > /home/runner/.config/rclone/rclone.conf
+          # Usa la variabile d'ambiente
+          echo "${RCLONE_CONFIG}" > /home/runner/.config/rclone/rclone.conf
           chmod 600 /home/runner/.config/rclone/rclone.conf
 
       # ---------------------------------------------------------
