@@ -8,49 +8,83 @@ from datetime import datetime, timedelta, timezone
 from bs4 import BeautifulSoup
 from collections import Counter
 import math
+import boto3  # <--- AGGIUNTA per R2
 
 # ------------------- CONFIG -------------------
 WORKDIR = os.getcwd()
 VARIABLES = ['T_2M', 'RELHUM', 'TOT_PREC', 'CLCT', 'CLCL', 'CLCM', 'CLCH', 'U_10M', 'V_10M', 'VMAX_10M', 'LPI', 'CAPE_ML', 'CAPE_CON', 'UH_MAX', 'PMSL', 'HSURF']
 VENUES_PATH = f"{WORKDIR}/comuni_italia.json"
 
+# --- CONFIGURAZIONE R2 (Aggiungi queste variabili d'ambiente) ---
+R2_ACCESS_KEY = os.environ.get("R2_ACCESS_KEY")
+R2_SECRET_KEY = os.environ.get("R2_SECRET_KEY")
+R2_ENDPOINT = os.environ.get("R2_ENDPOINT")
+R2_BUCKET_NAME = "json-meteod"
+
 # Lapse rates
 LAPSE_DRY = 0.0098
 LAPSE_MOIST = 0.006
 LAPSE_P = 0.12
 
-# SOGLIE NEBBIA OTTIMIZZATE (con fog_max_t dinamico)
+# SOGLIE NEBBIA OTTIMIZZATE
 SEASON_THRESHOLDS = {
-    "winter": {
-        "start_day": 1, "end_day": 80, 
-        "fog_rh": 96, "haze_rh": 85, 
-        "fog_wind": 7.0, "haze_wind": 12.0,
-        "fog_max_t": 15.0
-    },
-    "spring": {
-        "start_day": 81, "end_day": 172, 
-        "fog_rh": 97, "haze_rh": 85, 
-        "fog_wind": 6.0, "haze_wind": 10.0,
-        "fog_max_t": 20.0
-    },
-    "summer": {
-        "start_day": 173, "end_day": 263, 
-        "fog_rh": 98, "haze_rh": 90, 
-        "fog_wind": 4.0, "haze_wind": 9.0,
-        "fog_max_t": 26.0
-    },
-    "autumn": {
-        "start_day": 264, "end_day": 365, 
-        "fog_rh": 95, "haze_rh": 88, 
-        "fog_wind": 7.0, "haze_wind": 11.0,
-        "fog_max_t": 20.0
-    }
+    "winter": {"start_day": 1, "end_day": 80, "fog_rh": 96, "haze_rh": 85, "fog_wind": 7.0, "haze_wind": 12.0, "fog_max_t": 15.0},
+    "spring": {"start_day": 81, "end_day": 172, "fog_rh": 97, "haze_rh": 85, "fog_wind": 6.0, "haze_wind": 10.0, "fog_max_t": 20.0},
+    "summer": {"start_day": 173, "end_day": 263, "fog_rh": 98, "haze_rh": 90, "fog_wind": 4.0, "haze_wind": 9.0, "fog_max_t": 26.0},
+    "autumn": {"start_day": 264, "end_day": 365, "fog_rh": 95, "haze_rh": 88, "fog_wind": 7.0, "haze_wind": 11.0, "fog_max_t": 20.0}
 }
 
 CET = timezone(timedelta(hours=1))
 CEST = timezone(timedelta(hours=2))
 
-# ------------------- METEO CORE -------------------
+# ------------------- R2 FUNCTIONS (NUOVE) -------------------
+def get_r2_client():
+    """Inizializza il client boto3 per Cloudflare R2"""
+    if not R2_ACCESS_KEY or not R2_SECRET_KEY or not R2_ENDPOINT:
+        print("[R2] ⚠️ Credenziali mancanti. Upload R2 disabilitato.", flush=True)
+        return None
+    
+    return boto3.client(
+        's3',
+        endpoint_url=R2_ENDPOINT,
+        aws_access_key_id=R2_ACCESS_KEY,
+        aws_secret_access_key=R2_SECRET_KEY,
+        region_name='auto'
+    )
+
+def upload_to_r2(local_file_path, run_date, comune_name):
+    """
+    Carica un file JSON su R2 con la stessa struttura di cartelle di Google Drive
+    Struttura: YYYYMMDD/comune.json
+    """
+    s3 = get_r2_client()
+    if not s3:
+        return False
+    
+    try:
+        # Percorso su R2: run_date/comune.json (es: 20260129/Roma.json)
+        object_key = f"{run_date}/{comune_name}.json"
+        
+        print(f"[R2] Uploading {object_key}...", flush=True)
+        
+        s3.upload_file(
+            local_file_path,
+            R2_BUCKET_NAME,
+            object_key,
+            ExtraArgs={
+                'ContentType': 'application/json',
+                'CacheControl': 'public, max-age=3600'  # Cache 1 ora
+            }
+        )
+        
+        print(f"[R2] ✅ {object_key} caricato.", flush=True)
+        return True
+        
+    except Exception as e:
+        print(f"[R2] ❌ Errore upload {comune_name}: {e}", flush=True)
+        return False
+
+# ------------------- METEO CORE (Invariato) -------------------
 def utc_to_local(dt_utc):
     now_utc = datetime.now(timezone.utc)
     if 31 <= now_utc.month <= 10 or (now_utc.month == 3 and now_utc.day >= 25) or (now_utc.month == 10 and now_utc.day <= 25):
@@ -106,14 +140,11 @@ def altitude_correction(t2m, rh, hs_model, hs_station, pmsl):
     wm = np.clip(rh / 100.0, 0.0, 1.0)
     return t2m + (LAPSE_DRY * (1.0 - wm) + LAPSE_MOIST * wm) * dz, pmsl + (dz / 100.0) * LAPSE_P * 100
 
-# ------------------- CLASSIFIERS -------------------
-
-# 1. Classificatore ORARIO
+# ------------------- CLASSIFIERS (Invariati) -------------------
 def classify_weather_hourly(t2m, rh2m, clct, clcl, clcm, clch,
                      tp_rate, wind_kmh, lpi, cape, uh,
                      season, season_thresh):
     
-    # --- MODIFICA: Calcolo nuvolosità spostato IN CIMA ---
     octas = clct / 100.0 * 8
     low = clcl if np.isfinite(clcl) else (clcm if np.isfinite(clcm) else 0)
 
@@ -122,7 +153,6 @@ def classify_weather_hourly(t2m, rh2m, clct, clcl, clcm, clch,
     elif octas <= 4: c_state = "POCO NUVOLOSO"
     elif octas <= 6: c_state = "NUVOLOSO"
     else: c_state = "COPERTO"
-    # -----------------------------------------------------
 
     wet_bulb = wet_bulb_celsius(t2m, rh2m)
     is_snow = wet_bulb < 0.5
@@ -134,14 +164,12 @@ def classify_weather_hourly(t2m, rh2m, clct, clcl, clcm, clch,
     gust_signal = wind_kmh >= 35
     deep_clouds = clct >= 90 and (clcm >= 40 or clch >= 40)
     
-    # --- MODIFICA: Return con cloud_state ---
     if conv_signal and (rain_signal or gust_signal) and deep_clouds:
         if c_state == "SERENO": c_state = "POCO NUVOLOSO"
         return f"{c_state} TEMPORALE"
     
     tp_rate = round(tp_rate, 1)
     
-    # Recupero soglie
     fog_rh = season_thresh.get("fog_rh", 95)
     fog_wd = season_thresh.get("fog_wind", 8)
     fog_t  = season_thresh.get("fog_max_t", 18)
@@ -157,28 +185,22 @@ def classify_weather_hourly(t2m, rh2m, clct, clcl, clcm, clch,
             if c_state == "NUBI ALTE": c_state = "COPERTO"
             return f"{c_state} {prec_low}"
         else:
-            # 0.1 <= tp < 0.3
             if t2m < fog_t and rh2m >= fog_rh and wind_kmh <= fog_wd and low >= 80: return "NEBBIA"
             elif t2m < fog_t and rh2m >= haze_rh and wind_kmh <= haze_wd and low >= 50: return "FOSCHIA"
             else: 
                 if c_state == "NUBI ALTE": c_state = "COPERTO"
                 return f"{c_state} {prec_low}"
     else:
-        # tp < 0.1
         if t2m < fog_t and rh2m >= fog_rh and wind_kmh <= fog_wd and low >= 80: return "NEBBIA"
         elif t2m < fog_t and rh2m >= haze_rh and wind_kmh <= haze_wd and low >= 50: return "FOSCHIA"
         else: return c_state
 
-
-
-# 2. Classificatore TRIORARIO AGGREGATO
 def classify_weather_3h_aggregated(t_avg, rh_avg, clct_avg, tp_sum, wind_avg, hourly_descriptions_list, season_thresh):
     
     wet_bulb = wet_bulb_celsius(t_avg, rh_avg)
     prec_type_high = "NEVE" if wet_bulb < 0.5 else "PIOGGIA"
     prec_type_low = "NEVISCHIO" if wet_bulb < 0.5 else "PIOGGERELLA"
     
-    # Cloud cover -> octa
     octas = clct_avg / 100.0 * 8
     if octas <= 2:
         cloud_state = "SERENO"
@@ -189,27 +211,19 @@ def classify_weather_3h_aggregated(t_avg, rh_avg, clct_avg, tp_sum, wind_avg, ho
     else:
         cloud_state = "COPERTO"
 
-    # Nubi alte da lista oraria
     nubi_alte_count = sum(1 for w in hourly_descriptions_list if "NUBI ALTE" in w)
     if nubi_alte_count >= 2:
         cloud_state = "NUBI ALTE"
 
     def normalize_cloud_state_for_precip(cs: str) -> str:
-        # vale solo nei casi con precipitazione
         return "COPERTO" if cs == "NUBI ALTE" else cs
 
-    # --- MODIFICA: Controllo TEMPORALE Prioritario ---
-    # Se anche solo un'ora nel blocco ha "TEMPORALE", l'intero blocco diventa TEMPORALE
     if any("TEMPORALE" in w for w in hourly_descriptions_list):
         if cloud_state == "SERENO": 
             cloud_state = "POCO NUVOLOSO"
-        # Normalizziamo nubi alte in coperto se necessario, o lo lasciamo. 
-        # Di solito col temporale è coperto/nubi alte, ma forziamo la logica standard
         cloud_state = normalize_cloud_state_for_precip(cloud_state) 
         return f"{cloud_state} TEMPORALE"
-    # -------------------------------------------------
 
-    # --- CASO 1: P > 0.9 mm ---
     if tp_sum > 0.9:
         if cloud_state == "SERENO":
             cloud_state = "POCO NUVOLOSO"
@@ -224,7 +238,6 @@ def classify_weather_3h_aggregated(t_avg, rh_avg, clct_avg, tp_sum, wind_avg, ho
 
         return f"{cloud_state} {prec_type_high} {intensity}"
 
-    # --- CASO 2: 0.1 <= P <= 0.9 mm ---
     elif 0.1 <= tp_sum <= 0.9:
         has_rain_snow = any(("PIOGGIA" in w or "NEVE" in w) for w in hourly_descriptions_list)
         has_drizzle_sleet = any(("PIOGGERELLA" in w or "NEVISCHIO" in w) for w in hourly_descriptions_list)
@@ -252,7 +265,6 @@ def classify_weather_3h_aggregated(t_avg, rh_avg, clct_avg, tp_sum, wind_avg, ho
         else:
             return cloud_state
 
-    # --- CASO 3: P < 0.1 mm ---
     else:
         fog_rh = season_thresh.get("fog_rh", 95)
         fog_wd = season_thresh.get("fog_wind", 8)
@@ -268,20 +280,18 @@ def classify_weather_3h_aggregated(t_avg, rh_avg, clct_avg, tp_sum, wind_avg, ho
         
         return cloud_state
 
-# 3. Classificatore GIORNALIERO
 def classify_daily_weather(recs, clct_avg, clcl_avg, clcm_avg, clch_avg, tp_tot, season, thresh):
     snow_hours = 0
     rain_hours = 0
     has_significant_snow_or_rain = False
     fog_hours = 0
     haze_hours = 0
-    has_storm = False # --- MODIFICA: Flag temporale ---
+    has_storm = False
 
     for r in recs:
         hour = int(r.get("h", 0))
         wtxt = r.get("w", "")
         
-        # --- MODIFICA: Controllo stringa ---
         if "TEMPORALE" in wtxt:
             has_storm = True
             
@@ -305,7 +315,6 @@ def classify_daily_weather(recs, clct_avg, clcl_avg, clcm_avg, clch_avg, tp_tot,
     elif octas <= 6: c_state = "NUVOLOSO"
     else: c_state = "COPERTO"
 
-    # --- MODIFICA: Priorità al TEMPORALE ---
     if has_storm:
         if c_state == "SERENO": c_state = "POCO NUVOLOSO"
         return f"{c_state} TEMPORALE"
@@ -324,8 +333,6 @@ def classify_daily_weather(recs, clct_avg, clcl_avg, clcm_avg, clch_avg, tp_tot,
     
     if c_state == "SERENO": c_state = "POCO NUVOLOSO"
     return f"{c_state} {prec_type} {intensity}"
-
-
 
 # ------------------- DATA PROCESSING -------------------
 def extract(var, y, x, weighted=False):
@@ -381,6 +388,9 @@ def process_data():
     ref = datetime.strptime(RUN, "%Y%m%d%H").replace(tzinfo=timezone.utc)
     seas, thr = get_season_precise(ref)
     
+    # Estrazione solo data (YYYYMMDD) per struttura cartelle
+    run_date_str = RUN[:8]  # Es: "20260129"
+    
     for c, i in venues.items():
         if isinstance(i, list): ly, lx, le = i[0], i[1], i[2]
         else: ly, lx, le = i['lat'], i['lon'], i['elev']
@@ -435,13 +445,12 @@ def process_data():
                     "w": wtxt
                 })
                 
-            # TRIORARIO (Nuova logica prioritaria + Fix Float)
+            # TRIORARIO
             num_blocks = len(tc) // 3
             for i in range(num_blocks):
                 b = i * 3
                 e = b + 3
                 
-                # CAST A FLOAT PER JSON
                 t_avg = float(np.mean(tc[b:e]))
                 rh_avg = float(np.mean(rh[b:e]))
                 ct_avg = float(np.mean(ct[b:e]))
@@ -449,26 +458,18 @@ def process_data():
                 pr_avg = float(np.mean(pc[b:e]))
                 tp_sum = float(np.sum(tp[b:e]))
                 
-                # Lista descrizioni orarie per il controllo prioritario
                 chk = H[b:e]
                 w_list = [x["w"] for x in chk]
                 
-                # --- NUOVA LOGICA DIREZIONE VENTO ---
-                # 1. Contiamo le frequenze delle direzioni
                 dirs_counter = Counter([x["vd"] for x in chk])
                 most_common_dir, freq = dirs_counter.most_common(1)[0]
                 
-                # 2. Se la frequenza è 1 (significa che abbiamo 3 direzioni diverse, es: N, NW, W)
-                #    allora prendiamo la direzione dell'ora con il vento più forte ("v")
                 if freq == 1:
                     max_wind_item = max(chk, key=lambda item: item["v"])
                     selected_vd = max_wind_item["vd"]
                 else:
-                    # Altrimenti vince la maggioranza (2 su 3, o 3 su 3)
                     selected_vd = most_common_dir
-                # ------------------------------------
 
-                # Classificazione 3H
                 w3 = classify_weather_3h_aggregated(t_avg, rh_avg, ct_avg, tp_sum, wk_avg, w_list, thr)
                 
                 T.append({
@@ -479,11 +480,10 @@ def process_data():
                     "p": round(tp_sum, 1), 
                     "pr": round(pr_avg), 
                     "v": round(wk_avg, 1), 
-                    "vd": selected_vd, # Qui usiamo la variabile calcolata sopra
+                    "vd": selected_vd,
                     "vg": round(max(x["vg"] for x in chk), 1), 
                     "w": w3
                 })
-
                 
             days = {}
             for r in H: days.setdefault(r["d"], []).append(r)
@@ -511,8 +511,13 @@ def process_data():
                 })
             
             safe_c = c.replace("'", " ")
-            with open(f"{out}/{safe_c}.json", 'w') as f:
+            local_json_path = f"{out}/{safe_c}.json"
+            
+            with open(local_json_path, 'w') as f:
                 json.dump({"r": RUN, "c": c, "x": ly, "y": lx, "z": le, "ORARIO": H, "TRIORARIO": T, "GIORNALIERO": G}, f, separators=(',', ':'), ensure_ascii=False)
+            
+            # --- UPLOAD SU R2 ---
+            upload_to_r2(local_json_path, run_date_str, safe_c)
                 
         except Exception as e: print(f"Err {c}: {e}")
 
