@@ -1,0 +1,104 @@
+name: ICON2I MeteoD - BACKUP
+
+on:
+  # Rimosso schedule per impedire l'esecuzione automatica
+  workflow_dispatch:
+
+jobs:
+  run-bollettino:
+    runs-on: ubuntu-latest
+    env:
+      LC_ALL: it_IT.UTF-8
+      LANG: it_IT.UTF-8
+      LANGUAGE: it_IT.UTF-8
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # ---------------------------------------------------------
+      # 1. ESECUZIONE SCRIPT PYTHON (Genera file + Upload R2)
+      # ---------------------------------------------------------
+      - name: Run ICON2I pipeline
+        env:
+          # Le chiavi R2 servono qui allo script Python
+          R2_ACCESS_KEY: ${{ secrets.R2_ACCESS_KEY }}
+          R2_SECRET_KEY: ${{ secrets.R2_SECRET_KEY }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+        run: |
+          # Aggiornato nome file
+          python icon2i_backup.py
+
+      # ---------------------------------------------------------
+      # 2. SETUP RCLONE (Eseguito solo se Python ha successo)
+      # ---------------------------------------------------------
+      - name: Install & Setup rclone
+        if: success()
+        env:
+          RCLONE_CONFIG: ${{ secrets.RCLONE_CONFIG }}
+        run: |
+          curl https://rclone.org/install.sh | sudo bash
+          mkdir -p /home/runner/.config/rclone
+          # Usa la variabile d'ambiente
+          echo "${RCLONE_CONFIG}" > /home/runner/.config/rclone/rclone.conf
+          chmod 600 /home/runner/.config/rclone/rclone.conf
+
+      # ---------------------------------------------------------
+      # 3. UPLOAD GOOGLE DRIVE
+      # ---------------------------------------------------------
+      - name: Upload to Google Drive
+        if: success()
+        run: |
+          # Ricalcolo la data/run per sapere quale cartella caricare
+          # (Deve corrispondere alla logica usata da icon2i_backup.py)
+          
+          # NOTA: Dato che ora lo lanci a mano, questa logica temporale 
+          # automatica potrebbe non coincidere esattamente con l'orario 
+          # in cui lo lanci se lo fai "fuori orario". 
+          # Tuttavia, se lo script python scarica in base all'ora corrente, 
+          # questa logica bash deve rimanere allineata.
+          
+          NOW_HOUR=$(date -u +%H%M)
+          # Se lanci prima delle 3 del mattino UTC (es. 2 AM), prende il run delle 12 di ieri
+          if [ "$NOW_HOUR" -lt 0300 ]; then
+            DATE=$(date -u -d "yesterday" +%Y%m%d)
+            RUN=12
+          else
+            DATE=$(date -u +%Y%m%d)
+            HOUR=$(date -u +%H)
+            if [ "$HOUR" -lt 14 ]; then
+              RUN=00
+            else
+              RUN=12
+            fi
+          fi
+
+          RUN_FOLDER="${DATE}${RUN}"
+          LOCAL_DIR="./${RUN_FOLDER}"
+          REMOTE_DIR="gd_personal:MeteoD/ICON-2I/${RUN_FOLDER}"
+
+          echo "🚀 Starting upload for: $RUN_FOLDER"
+
+          # Verifica che la cartella esista prima di provare l'upload
+          if [ -d "$LOCAL_DIR" ]; then
+            # Creo la cartella remota se non esiste
+            rclone mkdir "$REMOTE_DIR" || true
+            
+            # Copio i file
+            rclone copy "$LOCAL_DIR" "$REMOTE_DIR" --drive-chunk-size 64M --verbose
+            
+            echo "✅ Upload Google Drive completato"
+          else
+            echo "⚠️ Cartella $LOCAL_DIR non trovata! Forse lo script Python ha fallito o la data calcolata non corrisponde."
+            exit 1
+          fi
