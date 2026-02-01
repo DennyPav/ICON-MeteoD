@@ -1,0 +1,578 @@
+#!/bin/env python3
+import os
+import requests
+import json
+import numpy as np
+import xarray as xr
+from datetime import datetime, timedelta, timezone
+from bs4 import BeautifulSoup
+from collections import Counter
+import math
+import boto3
+
+# ------------------- CONFIG -------------------
+WORKDIR = os.getcwd()
+VARIABLES = ['T_2M', 'RELHUM', 'TOT_PREC', 'CLCT', 'CLCL', 'CLCM', 'CLCH', 'U_10M', 'V_10M', 'VMAX_10M', 'LPI', 'CAPE_ML', 'CAPE_CON', 'UH_MAX', 'PMSL', 'HSURF']
+VENUES_PATH = f"{WORKDIR}/comuni_italia.json"
+
+# --- CONFIGURAZIONE R2 ---
+R2_ACCESS_KEY = os.environ.get("R2_ACCESS_KEY")
+R2_SECRET_KEY = os.environ.get("R2_SECRET_KEY")
+R2_ENDPOINT = os.environ.get("R2_ENDPOINT")
+R2_BUCKET_NAME = "json-meteod"
+
+# Lapse rates
+LAPSE_DRY = 0.0098
+LAPSE_MOIST = 0.006
+LAPSE_P = 0.12
+
+# SOGLIE NEBBIA OTTIMIZZATE
+SEASON_THRESHOLDS = {
+    "winter": {"start_day": 1, "end_day": 80, "fog_rh": 96, "haze_rh": 85, "fog_wind": 7.0, "haze_wind": 12.0, "fog_max_t": 15.0},
+    "spring": {"start_day": 81, "end_day": 172, "fog_rh": 97, "haze_rh": 85, "fog_wind": 6.0, "haze_wind": 10.0, "fog_max_t": 20.0},
+    "summer": {"start_day": 173, "end_day": 263, "fog_rh": 98, "haze_rh": 90, "fog_wind": 4.0, "haze_wind": 9.0, "fog_max_t": 26.0},
+    "autumn": {"start_day": 264, "end_day": 365, "fog_rh": 95, "haze_rh": 88, "fog_wind": 7.0, "haze_wind": 11.0, "fog_max_t": 20.0}
+}
+
+CET = timezone(timedelta(hours=1))
+CEST = timezone(timedelta(hours=2))
+
+# ------------------- R2 FUNCTIONS -------------------
+def get_r2_client():
+    if not R2_ACCESS_KEY or not R2_SECRET_KEY or not R2_ENDPOINT:
+        print("[R2] ⚠️ Credenziali mancanti. Upload R2 disabilitato.", flush=True)
+        return None
+    return boto3.client(
+        's3',
+        endpoint_url=R2_ENDPOINT,
+        aws_access_key_id=R2_ACCESS_KEY,
+        aws_secret_access_key=R2_SECRET_KEY,
+        region_name='auto'
+    )
+
+def upload_to_r2(local_file_path, run_date, run_hour, comune_name):
+    s3 = get_r2_client()
+    if not s3: return False
+    try:
+        folder_name = f"{run_date}{run_hour}" 
+        object_key = f"ICON-2I/{folder_name}/{comune_name}.json"
+        print(f"[R2] Uploading {object_key}...", flush=True)
+        s3.upload_file(
+            local_file_path,
+            R2_BUCKET_NAME,
+            object_key,
+            ExtraArgs={'ContentType': 'application/json', 'CacheControl': 'public, max-age=3600'}
+        )
+        return True
+    except Exception as e:
+        print(f"[R2] ❌ Errore upload {comune_name}: {e}", flush=True)
+        return False
+
+# ------------------- METEO CORE -------------------
+def utc_to_local(dt_utc):
+    now_utc = datetime.now(timezone.utc)
+    if 31 <= now_utc.month <= 10 or (now_utc.month == 3 and now_utc.day >= 25) or (now_utc.month == 10 and now_utc.day <= 25):
+        return dt_utc.astimezone(CEST)
+    return dt_utc.astimezone(CET)
+
+def wet_bulb_celsius(t_c, rh_percent):
+    if np.isnan(t_c) or np.isnan(rh_percent): return np.nan
+    return t_c * np.arctan(0.151977 * np.sqrt(rh_percent + 8.313659)) + np.arctan(t_c + rh_percent) - np.arctan(rh_percent - 1.676331) + 0.00391838 * rh_percent**1.5 * np.arctan(0.023101 * rh_percent) - 4.686035
+
+def get_run_datetime_now_utc():
+    now = datetime.now(timezone.utc)
+    if now.hour < 3: return (now - timedelta(days=1)).strftime("%Y%m%d"), "12"
+    elif now.hour < 14: return now.strftime("%Y%m%d"), "00"
+    return now.strftime("%Y%m%d"), "12"
+
+def download_icon_data(run_date, run_hour):
+    grib_dir = f"{WORKDIR}/grib_data/{run_date}{run_hour}"
+    os.makedirs(grib_dir, exist_ok=True)
+    base_url = f'https://meteohub.agenziaitaliameteo.it/nwp/ICON-2I_SURFACE_PRESSURE_LEVELS/{run_date}{run_hour}/'
+    
+    try:
+        if requests.head(base_url, timeout=10).status_code != 200: raise RuntimeError("Run off")
+    except: pass
+    
+    success_count = 0
+    for var in VARIABLES:
+        local_path = f"{grib_dir}/{var}.grib"
+        if os.path.isfile(local_path) and os.path.getsize(local_path) > 1000: 
+            success_count += 1
+            continue
+        try:
+            r = requests.get(f'{base_url}{var}/', timeout=30)
+            if r.status_code != 200:
+                print(f"[DL] ⚠️ Indice non trovato per {var}, skip.")
+                continue
+                
+            soup = BeautifulSoup(r.text, 'html.parser')
+            grib_files = [a.get('href') for a in soup.find_all('a') if a.get('href', '').endswith('.grib')]
+            if grib_files:
+                with requests.get(f'{base_url}{var}/{grib_files[0]}', stream=True, timeout=120) as resp:
+                    resp.raise_for_status()
+                    with open(local_path, 'wb') as f: 
+                        for chunk in resp.iter_content(chunk_size=8192): f.write(chunk)
+                print(f"DL {var}")
+                success_count += 1
+            else:
+                print(f"[DL] ⚠️ Nessun file .grib trovato per {var}")
+        except Exception as e:
+            print(f"[DL] ❌ Errore download {var}: {e}")
+            # Non facciamo 'raise', continuiamo col prossimo
+            pass
+            
+    return success_count > 0 # Ritorna True se almeno qualcosa c'è
+
+def kelvin_to_celsius(k): return k - 273.15
+def mps_to_kmh(mps): return mps * 3.6
+def wind_speed_direction(u, v): return np.sqrt(u**2 + v**2), (np.degrees(np.arctan2(-u, -v)) % 360)
+def wind_dir_to_cardinal(deg): 
+    if np.isnan(deg): return None
+    return ['N','NE','E','SE','S','SW','W','NW'][int((deg + 22.5) % 360 // 45)]
+
+def get_season_precise(dt): 
+    d = dt.timetuple().tm_yday
+    for s, t in SEASON_THRESHOLDS.items():
+        if t["start_day"] <= d <= t["end_day"]: return s, t
+    return "winter", SEASON_THRESHOLDS["winter"]
+
+def altitude_correction(t2m, rh, hs_model, hs_station, pmsl):
+    dz = hs_model - hs_station
+    if dz >= 0: return t2m, pmsl
+    wm = np.clip(rh / 100.0, 0.0, 1.0)
+    return t2m + (LAPSE_DRY * (1.0 - wm) + LAPSE_MOIST * wm) * dz, pmsl + (dz / 100.0) * LAPSE_P * 100
+
+def safe_round(val, decimals=1):
+    """Ritorna None se val è NaN, altrimenti arrotonda"""
+    if val is None or np.isnan(val): return None
+    if decimals == 0: return int(round(val))
+    return round(float(val), decimals)
+
+# ------------------- CLASSIFIERS -------------------
+def classify_weather_hourly(t2m, rh2m, clct, clcl, clcm, clch,
+                     tp_rate, wind_kmh, lpi, cape, uh,
+                     season, season_thresh):
+    
+    # Gestione dati mancanti nel classificatore
+    if np.isnan(t2m) or np.isnan(rh2m) or np.isnan(clct):
+        return "ND"
+
+    octas = clct / 100.0 * 8
+    low = clcl if np.isfinite(clcl) else (clcm if np.isfinite(clcm) else 0)
+
+    if clch > 60 and low < 30 and octas > 5: c_state = "NUBI ALTE"
+    elif octas <= 2: c_state = "SERENO"
+    elif octas <= 4: c_state = "POCO NUVOLOSO"
+    elif octas <= 6: c_state = "NUVOLOSO"
+    else: c_state = "COPERTO"
+
+    wet_bulb = wet_bulb_celsius(t2m, rh2m)
+    is_snow = wet_bulb < 0.5
+    prec_high = "NEVE" if is_snow else "PIOGGIA"
+    prec_low  = "NEVISCHIO" if is_snow else "PIOGGERELLA"
+    
+    # Se mancano dati di instabilità, assumiamo 0
+    cape = 0 if np.isnan(cape) else cape
+    lpi = 0 if np.isnan(lpi) else lpi
+    uh = 0 if np.isnan(uh) else uh
+    tp_rate = 0 if np.isnan(tp_rate) else tp_rate
+    wind_kmh = 0 if np.isnan(wind_kmh) else wind_kmh
+
+    conv_signal = ((cape >= 400 and lpi >= 1.5) or (uh >= 50) or (cape >= 800))
+    rain_signal = tp_rate >= 0.3
+    gust_signal = wind_kmh >= 35
+    deep_clouds = clct >= 90 and (clcm >= 40 or clch >= 40)
+    
+    if conv_signal and (rain_signal or gust_signal) and deep_clouds:
+        if c_state == "SERENO": c_state = "POCO NUVOLOSO"
+        return f"{c_state} TEMPORALE"
+    
+    tp_rate = round(tp_rate, 1)
+    
+    fog_rh = season_thresh.get("fog_rh", 95)
+    fog_wd = season_thresh.get("fog_wind", 8)
+    fog_t  = season_thresh.get("fog_max_t", 18)
+    haze_rh = season_thresh.get("haze_rh", 85)
+    haze_wd = season_thresh.get("haze_wind", 12)
+
+    if tp_rate >= 0.1:
+        if c_state == "SERENO": c_state = "POCO NUVOLOSO"
+        if tp_rate > 0.3:
+            intent = "INTENSA" if tp_rate >= 7.0 else ("MODERATA" if tp_rate >= 2.0 else "DEBOLE")
+            return f"{c_state} {prec_high} {intent}"
+        elif math.isclose(tp_rate, 0.3, abs_tol=1e-3):
+            if c_state == "NUBI ALTE": c_state = "COPERTO"
+            return f"{c_state} {prec_low}"
+        else:
+            if t2m < fog_t and rh2m >= fog_rh and wind_kmh <= fog_wd and low >= 80: return "NEBBIA"
+            elif t2m < fog_t and rh2m >= haze_rh and wind_kmh <= haze_wd and low >= 50: return "FOSCHIA"
+            else: 
+                if c_state == "NUBI ALTE": c_state = "COPERTO"
+                return f"{c_state} {prec_low}"
+    else:
+        if t2m < fog_t and rh2m >= fog_rh and wind_kmh <= fog_wd and low >= 80: return "NEBBIA"
+        elif t2m < fog_t and rh2m >= haze_rh and wind_kmh <= haze_wd and low >= 50: return "FOSCHIA"
+        else: return c_state
+
+def classify_weather_3h_aggregated(t_avg, rh_avg, clct_avg, tp_sum, wind_avg, hourly_descriptions_list, season_thresh):
+    if np.isnan(t_avg): return "ND"
+    
+    wet_bulb = wet_bulb_celsius(t_avg, rh_avg)
+    prec_type_high = "NEVE" if wet_bulb < 0.5 else "PIOGGIA"
+    prec_type_low = "NEVISCHIO" if wet_bulb < 0.5 else "PIOGGERELLA"
+    
+    octas = clct_avg / 100.0 * 8
+    if octas <= 2: cloud_state = "SERENO"
+    elif octas <= 4: cloud_state = "POCO NUVOLOSO"
+    elif octas <= 6: cloud_state = "NUVOLOSO"
+    else: cloud_state = "COPERTO"
+
+    nubi_alte_count = sum(1 for w in hourly_descriptions_list if "NUBI ALTE" in w)
+    if nubi_alte_count >= 2: cloud_state = "NUBI ALTE"
+
+    def normalize_cloud_state_for_precip(cs: str) -> str:
+        return "COPERTO" if cs == "NUBI ALTE" else cs
+
+    if any("TEMPORALE" in w for w in hourly_descriptions_list):
+        if cloud_state == "SERENO": cloud_state = "POCO NUVOLOSO"
+        cloud_state = normalize_cloud_state_for_precip(cloud_state) 
+        return f"{cloud_state} TEMPORALE"
+
+    if tp_sum > 0.9:
+        if cloud_state == "SERENO": cloud_state = "POCO NUVOLOSO"
+        cloud_state = normalize_cloud_state_for_precip(cloud_state)
+        if tp_sum >= 20.0: intensity = "INTENSA"
+        elif tp_sum >= 5.0: intensity = "MODERATA"
+        else: intensity = "DEBOLE"
+        return f"{cloud_state} {prec_type_high} {intensity}"
+
+    elif 0.1 <= tp_sum <= 0.9:
+        has_rain_snow = any(("PIOGGIA" in w or "NEVE" in w) for w in hourly_descriptions_list)
+        has_drizzle_sleet = any(("PIOGGERELLA" in w or "NEVISCHIO" in w) for w in hourly_descriptions_list)
+        has_fog = any("NEBBIA" in w for w in hourly_descriptions_list)
+        has_haze = any("FOSCHIA" in w for w in hourly_descriptions_list)
+        
+        if has_rain_snow:
+            if cloud_state == "SERENO": cloud_state = "POCO NUVOLOSO"
+            cloud_state = normalize_cloud_state_for_precip(cloud_state)
+            return f"{cloud_state} {prec_type_high} DEBOLE"
+        elif has_drizzle_sleet:
+            if cloud_state == "SERENO": cloud_state = "POCO NUVOLOSO"
+            cloud_state = normalize_cloud_state_for_precip(cloud_state)
+            return f"{cloud_state} {prec_type_low}"
+        elif has_fog: return "NEBBIA"
+        elif has_haze: return "FOSCHIA"
+        else: return cloud_state
+    else:
+        fog_rh = season_thresh.get("fog_rh", 95)
+        fog_wd = season_thresh.get("fog_wind", 8)
+        fog_t  = season_thresh.get("fog_max_t", 18)
+        haze_rh = season_thresh.get("haze_rh", 85)
+        haze_wd = season_thresh.get("haze_wind", 12)
+
+        if t_avg < fog_t:
+            if rh_avg >= fog_rh and wind_avg <= fog_wd: return "NEBBIA"
+            if rh_avg >= haze_rh and wind_avg <= haze_wd: return "FOSCHIA"
+        return cloud_state
+
+def classify_daily_weather(recs, clct_avg, clcl_avg, clcm_avg, clch_avg, tp_tot, season, thresh):
+    if not recs: return "ND"
+    
+    snow_hours = 0
+    rain_hours = 0
+    has_significant_snow_or_rain = False
+    fog_hours = 0
+    haze_hours = 0
+    has_storm = False
+
+    for r in recs:
+        hour = int(r.get("h", 0))
+        wtxt = r.get("w", "")
+        if "TEMPORALE" in wtxt: has_storm = True
+        if "PIOGGIA" in wtxt:
+            has_significant_snow_or_rain = True
+            rain_hours += 1
+        elif "NEVE" in wtxt:
+            has_significant_snow_or_rain = True
+            snow_hours += 1
+        elif 5 <= hour <= 22:
+            if "NEBBIA" in wtxt: fog_hours += 1
+            elif "FOSCHIA" in wtxt: haze_hours += 1
+
+    is_snow_day = snow_hours > rain_hours
+    octas = clct_avg / 100.0 * 8
+    low = clcl_avg if np.isfinite(clcl_avg) else (clcm_avg if np.isfinite(clcm_avg) else 0)
+
+    if clch_avg > 60 and low < 30 and octas > 5: c_state = "NUBI ALTE"
+    elif octas <= 2: c_state = "SERENO"
+    elif octas <= 4: c_state = "POCO NUVOLOSO"
+    elif octas <= 6: c_state = "NUVOLOSO"
+    else: c_state = "COPERTO"
+
+    if has_storm:
+        if c_state == "SERENO": c_state = "POCO NUVOLOSO"
+        return f"{c_state} TEMPORALE"
+
+    if not has_significant_snow_or_rain:
+        total_fog_haze = fog_hours + haze_hours
+        if total_fog_haze >= 9: return "NEBBIA" if fog_hours >= haze_hours else "FOSCHIA"
+        else: return c_state
+
+    prec_type = "NEVE" if is_snow_day else "PIOGGIA"
+    if tp_tot >= 30.0: intensity = "INTENSA"
+    elif tp_tot >= 10.0: intensity = "MODERATA"
+    else: intensity = "DEBOLE"
+    
+    if c_state == "SERENO": c_state = "POCO NUVOLOSO"
+    return f"{c_state} {prec_type} {intensity}"
+
+# ------------------- DATA PROCESSING -------------------
+def extract(var, y, x, weighted=False):
+    if np.isscalar(var) or var.size == 1: return np.array([float(var)])
+    if var.ndim == 1: return var # Already 1D
+    # Handle NaN array input (missing var)
+    if np.all(np.isnan(var)): 
+        # Ritorna array di NaN lungo l'asse temporale
+        return var[:, 0, 0] # Assumiamo shape (Time, Y, X), ritorniamo (Time,)
+        
+    sl = var[..., y, x]
+    if var.ndim == 2 or not weighted: return sl
+    
+    ring1 = []
+    NY, NX = var.shape[-2:]
+    for di in [-1,0,1]:
+        for dj in [-1,0,1]:
+            if di==0 and dj==0: continue
+            ni, nj = y+di, x+dj
+            if 0<=ni<NY and 0<=nj<NX: ring1.append(var[..., ni, nj])
+            
+    if not ring1: return sl
+    m1 = np.stack(ring1, axis=-1).mean(axis=-1)
+    
+    ring2 = []
+    for di in [-2,-1,0,1,2]:
+        for dj in [-2,-1,0,1,2]:
+            if abs(di)<=1 and abs(dj)<=1: continue
+            ni, nj = y+di, x+dj
+            if 0<=ni<NY and 0<=nj<NX: ring2.append(var[..., ni, nj])
+            
+    if not ring2: return 0.6*sl + 0.4*m1
+    m2 = np.stack(ring2, axis=-1).mean(axis=-1)
+    return 0.5*sl + 0.3*m1 + 0.2*m2
+
+def process_data():
+    RUN = os.getenv("RUN", "")
+    if not RUN:
+        d, h = get_run_datetime_now_utc()
+        RUN = d+h
+        download_icon_data(d, h)
+    
+    print(f"Start {RUN}")
+    out = f"{WORKDIR}/{RUN}"
+    os.makedirs(out, exist_ok=True)
+    
+    D = {}
+    for v in VARIABLES:
+        p = f"{WORKDIR}/grib_data/{RUN}/{v}.grib"
+        if os.path.exists(p): 
+            try:
+                D[v] = xr.open_dataset(p, engine='cfgrib', backend_kwargs={"indexpath": ""})
+            except Exception as e:
+                print(f"Errore apertura {v}: {e}")
+
+    # Controllo critico: T_2M deve esistere per la struttura dei dati
+    if 'T_2M' not in D:
+        print("CRITICO: T_2M mancante. Impossibile procedere.")
+        return
+
+    # Usiamo T_2M come riferimento per la shape temporale e spaziale
+    ref_da = D['T_2M']['t2m']
+    ref_shape = ref_da.shape # (Time, Y, X)
+    
+    hs_da = list(D['HSURF'].data_vars.values())[0] if 'HSURF' in D else xr.DataArray(np.zeros(ref_shape[-2:]), dims=('y','x'))
+    latg, long = hs_da['latitude'].values, hs_da['longitude'].values
+    if latg.ndim==1: long, latg = np.meshgrid(long, latg)
+    hsg = hs_da.values if hs_da.ndim==2 else hs_da.isel(time=0).values
+    
+    venues = json.load(open(VENUES_PATH))
+    ref = datetime.strptime(RUN, "%Y%m%d%H").replace(tzinfo=timezone.utc)
+    seas, thr = get_season_precise(ref)
+    
+    run_date_str = RUN[:8]
+    run_hour_str = RUN[8:]
+    
+    # Helper per estrazione sicura (ritorna array di NaN se manca la variabile)
+    def get_data_safe(var_name, sub_var):
+        if var_name in D:
+            return D[var_name][sub_var].values
+        print(f"Variabile mancante: {var_name}, uso fallback NaN")
+        return np.full(ref_shape, np.nan)
+
+    for c, i in venues.items():
+        if isinstance(i, list): ly, lx, le = i[0], i[1], i[2]
+        else: ly, lx, le = i['lat'], i['lon'], i['elev']
+        
+        try:
+            dist = (latg - ly)**2 + (long - lx)**2
+            cy, cx = np.unravel_index(np.argmin(dist), dist.shape)
+            
+            # --- ESTRAZIONE DATI CON FALLBACK ---
+            t2 = extract(kelvin_to_celsius(get_data_safe('T_2M', 't2m')), cy, cx)
+            rh = np.clip(extract(get_data_safe('RELHUM', 'r'), cy, cx), 0, 100)
+            u = extract(get_data_safe('U_10M', 'u10'), cy, cx)
+            v = extract(get_data_safe('V_10M', 'v10'), cy, cx)
+            vm = mps_to_kmh(extract(get_data_safe('VMAX_10M', 'fg10'), cy, cx)) # <-- QUI IL FIX PER VMAX
+            pm = extract(get_data_safe('PMSL', 'pmsl')/100, cy, cx)
+            lpi = extract(get_data_safe('LPI', 'unknown'), cy, cx)
+            
+            cape_ml = get_data_safe('CAPE_ML', 'cape_ml')
+            cape_con = get_data_safe('CAPE_CON', 'cape_con')
+            cape = extract(np.maximum(np.nan_to_num(cape_ml), np.nan_to_num(cape_con)), cy, cx) # nan_to_num evita errori max
+            
+            uh = extract(get_data_safe('UH_MAX', 'unknown'), cy, cx)
+            
+            # Precipitazioni: diff requires processing
+            tp_raw = get_data_safe('TOT_PREC', 'tp')
+            if np.all(np.isnan(tp_raw)):
+                tp = np.zeros(len(t2)) # Se manca pioggia, assumiamo 0
+            else:
+                tp = extract(np.diff(tp_raw, axis=0, prepend=0), cy, cx, True)
+                
+            ct = extract(get_data_safe('CLCT', 'clct'), cy, cx, True)
+            
+            # Clouds specific fallback (se mancano, meglio 0 che NaN per la logica dei layer)
+            def get_cloud_safe(k, sk):
+                d = get_data_safe(k, sk)
+                if np.all(np.isnan(d)): return np.zeros(ref_shape)
+                return d
+
+            cl = extract(get_cloud_safe('CLCL', 'ccl'), cy, cx, True)
+            cm = extract(get_cloud_safe('CLCM', 'ccl'), cy, cx, True)
+            ch = extract(get_cloud_safe('CLCH', 'ccl'), cy, cx, True)
+            
+            tc, pc = altitude_correction(t2, rh, hsg[cy,cx], le, pm)
+            ws, wd = wind_speed_direction(u, v)
+            wk = mps_to_kmh(ws)
+            wdirs = np.vectorize(wind_dir_to_cardinal)(wd)
+            
+            H, T, G = [], [], []
+            
+            # ORARIO
+            for k in range(len(tc)):
+                loc = utc_to_local(ref + timedelta(hours=k))
+                wtxt = classify_weather_hourly(tc[k], rh[k], ct[k], cl[k], cm[k], ch[k], tp[k], wk[k], lpi[k], cape[k], uh[k], seas, thr)
+                H.append({
+                    "d": loc.strftime("%Y%m%d"), 
+                    "h": loc.strftime("%H"), 
+                    "t": safe_round(tc[k], 1), 
+                    "r": safe_round(rh[k], 0), 
+                    "p": safe_round(tp[k], 1), 
+                    "pr": safe_round(pc[k], 0), 
+                    "v": safe_round(wk[k], 1), 
+                    "vd": str(wdirs[k]) if wdirs[k] is not None else None, 
+                    "vg": safe_round(vm[k], 1), # <-- SE VMAX MANCA, DIVENTA NULL
+                    "w": wtxt
+                })
+                
+            # TRIORARIO
+            num_blocks = len(tc) // 3
+            for i in range(num_blocks):
+                b = i * 3
+                e = b + 3
+                
+                # Calcoli aggregati sicuri (ignorano NaN)
+                t_avg = float(np.nanmean(tc[b:e]))
+                rh_avg = float(np.nanmean(rh[b:e]))
+                ct_avg = float(np.nanmean(ct[b:e]))
+                wk_avg = float(np.nanmean(wk[b:e]))
+                pr_avg = float(np.nanmean(pc[b:e]))
+                tp_sum = float(np.nansum(tp[b:e]))
+                
+                chk = H[b:e]
+                w_list = [x["w"] for x in chk]
+                
+                valid_dirs = [x["vd"] for x in chk if x["vd"] is not None]
+                if valid_dirs:
+                    dirs_counter = Counter(valid_dirs)
+                    most_common_dir, freq = dirs_counter.most_common(1)[0]
+                    if freq == 1:
+                        # Find max wind item ignoring None
+                        valid_items = [x for x in chk if x["v"] is not None]
+                        if valid_items:
+                            max_wind_item = max(valid_items, key=lambda item: item["v"])
+                            selected_vd = max_wind_item["vd"]
+                        else: selected_vd = most_common_dir
+                    else:
+                        selected_vd = most_common_dir
+                else:
+                    selected_vd = None
+
+                w3 = classify_weather_3h_aggregated(t_avg, rh_avg, ct_avg, tp_sum, wk_avg, w_list, thr)
+                
+                # Gestione max VG con valori None
+                vgs = [x["vg"] for x in chk if x["vg"] is not None]
+                max_vg = max(vgs) if vgs else None
+
+                T.append({
+                    "d": chk[0]["d"], 
+                    "h": chk[0]["h"], 
+                    "t": safe_round(t_avg, 1), 
+                    "r": safe_round(rh_avg, 0), 
+                    "p": safe_round(tp_sum, 1), 
+                    "pr": safe_round(pr_avg, 0), 
+                    "v": safe_round(wk_avg, 1), 
+                    "vd": selected_vd,
+                    "vg": safe_round(max_vg, 1), 
+                    "w": w3
+                })
+                
+            days = {}
+            for r in H: days.setdefault(r["d"], []).append(r)
+            d_keys = sorted(days.keys())
+            if len(d_keys)>1: d_keys = d_keys[:-1]
+            
+            for d in d_keys:
+                recs = days[d]
+                idxs = [i for i, x in enumerate(H) if x["d"] == d]
+                if not idxs: continue
+                
+                ct_a = np.nanmean(ct[idxs])
+                cl_a = np.nanmean(cl[idxs])
+                cm_a = np.nanmean(cm[idxs])
+                ch_a = np.nanmean(ch[idxs])
+                
+                # Sum only valid precip
+                p_vals = [r["p"] for r in recs if r["p"] is not None]
+                tp_tot = sum(p_vals)
+                
+                wdaily = classify_daily_weather(recs, ct_a, cl_a, cm_a, ch_a, tp_tot, seas, thr)
+                
+                t_vals = [r["t"] for r in recs if r["t"] is not None]
+                if t_vals:
+                    tmin = min(t_vals)
+                    tmax = max(t_vals)
+                else:
+                    tmin = None
+                    tmax = None
+
+                G.append({
+                    "d": d, 
+                    "tmin": safe_round(tmin, 1), 
+                    "tmax": safe_round(tmax, 1), 
+                    "p": safe_round(tp_tot, 1), 
+                    "w": wdaily
+                })
+            
+            safe_c = c.replace("'", " ")
+            local_json_path = f"{out}/{safe_c}.json"
+            
+            with open(local_json_path, 'w') as f:
+                json.dump({"r": RUN, "c": c, "x": ly, "y": lx, "z": le, "ORARIO": H, "TRIORARIO": T, "GIORNALIERO": G}, f, separators=(',', ':'), ensure_ascii=False)
+            
+            upload_to_r2(local_json_path, run_date_str, run_hour_str, safe_c)
+                
+        except Exception as e: print(f"Err {c}: {e}")
+
+if __name__ == "__main__":
+    process_data()
