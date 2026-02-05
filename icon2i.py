@@ -13,7 +13,7 @@ import boto3  # <--- AGGIUNTA per R2
 # ------------------- CONFIG -------------------
 WORKDIR = os.getcwd()
 VARIABLES = ['T_2M', 'RELHUM', 'TOT_PREC', 'CLCT', 'CLCL', 'CLCM', 'CLCH', 'U_10M', 'V_10M', 'VMAX_10M', 'LPI', 'CAPE_ML', 'CAPE_CON', 'UH_MAX', 'PMSL', 'HSURF']
-VENUES_PATH = f"{WORKDIR}/comuni_italia.json"
+VENUES_PATH = f"{WORKDIR}/comuni_italia_5000.json"
 
 # --- CONFIGURAZIONE R2 (Aggiungi queste variabili d'ambiente) ---
 R2_ACCESS_KEY = os.environ.get("R2_ACCESS_KEY")
