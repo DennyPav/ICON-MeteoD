@@ -5,6 +5,7 @@ import json
 import numpy as np
 import xarray as xr
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from bs4 import BeautifulSoup
 from collections import Counter
 import math
@@ -34,8 +35,7 @@ SEASON_THRESHOLDS = {
     "autumn": {"start_day": 264, "end_day": 365, "fog_rh": 95, "haze_rh": 88, "fog_wind": 7.0, "haze_wind": 11.0, "fog_max_t": 20.0}
 }
 
-CET = timezone(timedelta(hours=1))
-CEST = timezone(timedelta(hours=2))
+IT_TZ = ZoneInfo("Europe/Rome")
 
 # ------------------- R2 FUNCTIONS (NUOVE) -------------------
 def get_r2_client():
@@ -91,43 +91,14 @@ def upload_to_r2(local_file_path, run_date, run_hour, comune_name):
 
 
 # ------------------- METEO CORE (Invariato) -------------------
-def is_dst_eu(dt_utc):
-    """
-    Regole DST Unione Europea 1981-2099:
-    - Inizio: ultima domenica di marzo alle 01:00 CET -> 02:00 CEST
-    - Fine: ultima domenica di ottobre alle 03:00 CEST -> 02:00 CET
-    """
-    dt_local_cet = dt_utc.astimezone(timezone(timedelta(hours=1)))
-    year = dt_local_cet.year
-    month = dt_local_cet.month
-    day = dt_local_cet.day
-    hour = dt_local_cet.hour
-    
-    # Inizio DST: ultima domenica marzo
-    if month == 3:
-        last_sun_march = 31 - ((31 - dt_local_cet.weekday() + 7) % 7)
-        if day == last_sun_march and hour >= 1:
-            return True
-        elif day > last_sun_march:
-            return True
-    
-    # Fine DST: ultima domenica ottobre  
-    elif month == 10:
-        last_sun_oct = 31 - ((31 - dt_local_cet.weekday() + 7) % 7)
-        if day < last_sun_oct or (day == last_sun_oct and hour < 3):
-            return True
-    
-    # DST attiva da aprile a settembre
-    elif 4 <= month <= 9:
-        return True
-    
-    return False
-
 def utc_to_local(dt_utc):
-    """Versione corretta: usa l'ora del forecast, non 'now_utc'"""
-    if is_dst_eu(dt_utc):
-        return dt_utc.astimezone(timezone(timedelta(hours=2)))  # CEST
-    return dt_utc.astimezone(timezone(timedelta(hours=1)))     # CET
+    """
+    Converte un datetime UTC nell'ora locale italiana
+    usando il fuso Europe/Rome (gestione automatica CET/CEST).
+    """
+    if dt_utc.tzinfo is None:
+        dt_utc = dt_utc.replace(tzinfo=timezone.utc)
+    return dt_utc.astimezone(IT_TZ)
 
 def wet_bulb_celsius(t_c, rh_percent):
     return t_c * np.arctan(0.151977 * np.sqrt(rh_percent + 8.313659)) + np.arctan(t_c + rh_percent) - np.arctan(rh_percent - 1.676331) + 0.00391838 * rh_percent**1.5 * np.arctan(0.023101 * rh_percent) - 4.686035
