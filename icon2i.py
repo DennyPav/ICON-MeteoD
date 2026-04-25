@@ -455,45 +455,62 @@ def process_data():
                     "w": wtxt
                 })
                 
-            # TRIORARIO
-            num_blocks = len(tc) // 3
-            for i in range(num_blocks):
-                b = i * 3
-                e = b + 3
-                
-                t_avg = float(np.mean(tc[b:e]))
-                rh_avg = float(np.mean(rh[b:e]))
-                ct_avg = float(np.mean(ct[b:e]))
-                wk_avg = float(np.mean(wk[b:e]))
-                pr_avg = float(np.mean(pc[b:e]))
-                tp_sum = float(np.sum(tp[b:e]))
-                
-                chk = H[b:e]
-                w_list = [x["w"] for x in chk]
-                
-                dirs_counter = Counter([x["vd"] for x in chk])
-                most_common_dir, freq = dirs_counter.most_common(1)[0]
-                
-                if freq == 1:
-                    max_wind_item = max(chk, key=lambda item: item["v"])
-                    selected_vd = max_wind_item["vd"]
-                else:
-                    selected_vd = most_common_dir
+            # TRIORARIO - DEFINITIVO: Triore complete 00/03/06/09/12/15/18/21 locali
+			T = []
+			local_hours = [int(h) for h in [h["h"] for h in H]]  # Ore intere per calcoli
 
-                w3 = classify_weather_3h_aggregated(t_avg, rh_avg, ct_avg, tp_sum, wk_avg, w_list, thr)
-                
-                T.append({
-                    "d": chk[0]["d"], 
-                    "h": chk[0]["h"], 
-                    "t": round(t_avg, 1), 
-                    "r": round(rh_avg), 
-                    "p": round(tp_sum, 1), 
-                    "pr": round(pr_avg), 
-                    "v": round(wk_avg, 1), 
-                    "vd": selected_vd,
-                    "vg": round(max(x["vg"] for x in chk), 1), 
-                    "w": w3
-                })
+			# Definisci inizio di ogni triora locale (00=0,03=3,06=6,09=9,12=12,15=15,18=18,21=21)
+			triorario_starts = [0, 3, 6, 9, 12, 15, 18, 21]
+
+			for start_hour in triorario_starts:
+				target_hour_str = f"{start_hour:02d}"
+				
+				# Trova tutti gli indici dove inizia una triora (ora==start_hour)
+				potential_starts = [i for i, lh in enumerate(local_hours) if lh == start_hour]
+				
+				# Per ogni potenziale inizio, verifica se ha le 3 ore complete
+				for b in potential_starts:
+					# Controlla se b+1, b+2 esistono (prossime 2 ore)
+					if b + 2 >= len(local_hours):
+						continue  # Ultima incompleta
+					
+					# Verifica ore consecutive corrette per triora
+					if (local_hours[b+1] == (start_hour + 1) % 24 and
+						local_hours[b+2] == (start_hour + 2) % 24):
+						
+						e = b + 3
+						t_avg = float(np.mean(tc[b:e]))
+						rh_avg = float(np.mean(rh[b:e]))
+						ct_avg = float(np.mean(ct[b:e]))
+						wk_avg = float(np.mean(wk[b:e]))
+						pr_avg = float(np.mean(pc[b:e]))
+						tp_sum = float(np.sum(tp[b:e]))
+						
+						chk = H[b:e]
+						w_list = [x["w"] for x in chk]
+						
+						# Direzione vento
+						dirs_counter = Counter([x["vd"] for x in chk])
+						most_common_dir, freq = dirs_counter.most_common(1)[0]
+						selected_vd = most_common_dir if freq >= 2 else max(chk, key=lambda item: item["v"])["vd"]
+						
+						w3 = classify_weather_3h_aggregated(t_avg, rh_avg, ct_avg, tp_sum, wk_avg, w_list, thr)
+						
+						T.append({
+							"d": chk[0]["d"], 
+							"h": target_hour_str,  # "00","03","06",...
+							"t": round(t_avg, 1), 
+							"r": round(rh_avg), 
+							"p": round(tp_sum, 1), 
+							"pr": round(pr_avg), 
+							"v": round(wk_avg, 1), 
+							"vd": selected_vd,
+							"vg": round(max(x["vg"] for x in chk), 1), 
+							"w": w3
+						})
+
+			# Ordina per timestamp (opzionale)
+			T.sort(key=lambda x: (x["d"], int(x["h"])))
                 
             days = {}
             for r in H: days.setdefault(r["d"], []).append(r)
