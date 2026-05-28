@@ -529,6 +529,8 @@ def process_data():
                 tp_tot = sum(r["p"] for r in recs)
                 
                 wdaily = classify_daily_weather(recs, ct_a, cl_a, cm_a, ch_a, tp_tot, seas, thr)
+                if wdaily == "NUBI ALTE TEMPORALE":
+                    wdaily = "NUVOLOSO TEMPORALE"
                 G.append({
                     "d": d, 
                     "tmin": round(min(r["t"] for r in recs),1), 
