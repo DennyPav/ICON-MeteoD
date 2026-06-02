@@ -3,9 +3,9 @@ name: ICON2I MeteoD
 on:
   schedule:
     # 03:30 UTC tutti i giorni
-    - cron: "00 3 * * *"
+    - cron: "15 3 * * *"
     # 14:30 UTC tutti i giorni
-    - cron: "00 14 * * *"
+    - cron: "15 14 * * *"
   workflow_dispatch:
 
 jobs:
