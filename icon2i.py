@@ -183,10 +183,10 @@ def classify_weather_hourly(t2m, rh2m, clct, clcl, clcm, clch,
     prec_high = "NEVE" if is_snow else "PIOGGIA"
     prec_low  = "NEVISCHIO" if is_snow else "PIOGGERELLA"
     
-    conv_signal = ((cape >= 400 and lpi >= 1.5) or (uh >= 50) or (cape >= 800))
-    rain_signal = tp_rate >= 0.3
-    gust_signal = wind_kmh >= 35
-    deep_clouds = clct >= 90 and (clcm >= 40 or clch >= 40)
+    conv_signal = ((cape >= 300 and lpi >= 1.0) or (uh >= 40) or (cape >= 650))
+    rain_signal = tp_rate >= 0.2
+    gust_signal = wind_kmh >= 25
+    deep_clouds = clct >= 80 and (clcm >= 30 or clch >= 30)
     
     if conv_signal and (rain_signal or gust_signal) and deep_clouds:
         if c_state == "SERENO":
