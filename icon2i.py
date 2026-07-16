@@ -149,6 +149,21 @@ def altitude_correction(t2m, rh, hs_model, hs_station, pmsl):
     wm = np.clip(rh / 100.0, 0.0, 1.0)
     return t2m + (LAPSE_DRY * (1.0 - wm) + LAPSE_MOIST * wm) * dz, pmsl + (dz / 100.0) * LAPSE_P * 100
 
+def temperature_heat_correction(t_c):
+    # Da 30°C: 0°C; a 45°C e oltre: -1.5°C
+    correction = 1.5 * np.clip((t_c - 30.0) / 15.0, 0.0, 1.0)
+    return t_c - correction
+
+def mean_wind_correction(wind_kmh):
+    # Da 20 km/h: 0%; a 80 km/h e oltre: -15%
+    reduction = 0.15 * np.clip((wind_kmh - 20.0) / 60.0, 0.0, 1.0)
+    return wind_kmh * (1.0 - reduction)
+
+def gust_wind_correction(gust_kmh):
+    # Da 30 km/h: 0%; a 150 km/h e oltre: -25%
+    reduction = 0.25 * np.clip((gust_kmh - 30.0) / 120.0, 0.0, 1.0)
+    return gust_kmh * (1.0 - reduction)
+
 # ------------------- CLASSIFIERS (Invariati) -------------------
 def classify_weather_hourly(t2m, rh2m, clct, clcl, clcm, clch,
                      tp_rate, wind_kmh, lpi, cape, uh,
@@ -174,7 +189,10 @@ def classify_weather_hourly(t2m, rh2m, clct, clcl, clcm, clch,
     deep_clouds = clct >= 90 and (clcm >= 40 or clch >= 40)
     
     if conv_signal and (rain_signal or gust_signal) and deep_clouds:
-        if c_state == "SERENO": c_state = "POCO NUVOLOSO"
+        if c_state == "SERENO":
+            c_state = "POCO NUVOLOSO"
+        elif c_state == "NUBI ALTE":
+            c_state = "COPERTO"
         return f"{c_state} TEMPORALE"
     
     tp_rate = round(tp_rate, 1)
@@ -325,7 +343,10 @@ def classify_daily_weather(recs, clct_avg, clcl_avg, clcm_avg, clch_avg, tp_tot,
     else: c_state = "COPERTO"
 
     if has_storm:
-        if c_state == "SERENO": c_state = "POCO NUVOLOSO"
+        if c_state == "SERENO":
+            c_state = "POCO NUVOLOSO"
+        elif c_state == "NUBI ALTE":
+            c_state = "COPERTO"
         return f"{c_state} TEMPORALE"
 
     if not has_significant_snow_or_rain:
@@ -432,8 +453,12 @@ def process_data():
             ch = extract(D['CLCH']['ccl'].values if 'CLCH' in D else np.zeros_like(ct), cy, cx, True)
             
             tc, pc = altitude_correction(t2, rh, hsg[cy,cx], le, pm)
+            tc = temperature_heat_correction(tc)
+            
             ws, wd = wind_speed_direction(u, v)
-            wk = mps_to_kmh(ws)
+            wk = mean_wind_correction(mps_to_kmh(ws))
+            vm = gust_wind_correction(vm)
+            
             wdirs = np.vectorize(wind_dir_to_cardinal)(wd)
             
             H, T, G = [], [], []
