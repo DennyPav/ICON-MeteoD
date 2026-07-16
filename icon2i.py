@@ -151,17 +151,17 @@ def altitude_correction(t2m, rh, hs_model, hs_station, pmsl):
 
 def temperature_heat_correction(t_c):
     # Da 30°C: 0°C; a 45°C e oltre: -1.5°C
-    correction = 1.5 * np.clip((t_c - 30.0) / 15.0, 0.0, 1.0)
+    correction = 1.5 * np.clip((t_c - 30.0) / 20.0, 0.0, 1.0)
     return t_c - correction
 
 def mean_wind_correction(wind_kmh):
-    # Da 20 km/h: 0%; a 80 km/h e oltre: -15%
-    reduction = 0.15 * np.clip((wind_kmh - 20.0) / 60.0, 0.0, 1.0)
+    # Da 10 km/h: 0%; a 80 km/h e oltre: -15%
+    reduction = 0.15 * np.clip((wind_kmh - 10.0) / 60.0, 0.0, 1.0)
     return wind_kmh * (1.0 - reduction)
 
 def gust_wind_correction(gust_kmh):
-    # Da 30 km/h: 0%; a 150 km/h e oltre: -25%
-    reduction = 0.25 * np.clip((gust_kmh - 30.0) / 120.0, 0.0, 1.0)
+    # Da 20 km/h: 0%; a 150 km/h e oltre: -25%
+    reduction = 0.25 * np.clip((gust_kmh - 20.0) / 120.0, 0.0, 1.0)
     return gust_kmh * (1.0 - reduction)
 
 # ------------------- CLASSIFIERS (Invariati) -------------------
